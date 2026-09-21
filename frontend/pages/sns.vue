@@ -1067,12 +1067,53 @@
 
 	      </div>
 
+        <!-- 上一张按钮 -->
+        <button
+          v-if="canSwitchSnsPreviewImage"
+          type="button"
+          class="absolute left-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white/85 shadow-lg transition hover:bg-black/55 hover:text-white"
+          title="上一张 (也可按 ← 或 ↑ 方向键)"
+          aria-label="上一张图片"
+          @click.stop="showPrevSnsPreviewImage"
+        >
+          <svg class="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        <!-- 下一张按钮 -->
+        <button
+          v-if="canSwitchSnsPreviewImage"
+          type="button"
+          class="absolute right-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white/85 shadow-lg transition hover:bg-black/55 hover:text-white"
+          title="下一张 (也可按 → 或 ↓ 方向键)"
+          aria-label="下一张图片"
+          @click.stop="showNextSnsPreviewImage"
+        >
+          <svg class="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+
+        <!-- 左上角发布者与计数 -->
+        <div
+          v-if="previewCtx && !previewIsVideo && previewCtx.post"
+          class="absolute top-4 left-4 z-10 flex items-center gap-2 rounded-full bg-black/35 border border-white/15 px-3.5 py-1.5 text-xs text-white/90 backdrop-blur pointer-events-none select-none"
+        >
+          <span class="font-medium truncate max-w-[200px]">{{ previewCtx.post.displayName || previewCtx.post.username }}</span>
+          <span v-if="snsPreviewCounterText" class="text-white/60 font-mono">{{ snsPreviewCounterText }}</span>
+        </div>
+
         <div
           v-if="!previewIsVideo"
-          class="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full bg-black/35 border border-white/15 px-3 py-2 text-white backdrop-blur"
+          class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/35 border border-white/15 px-3 py-2 text-white backdrop-blur"
           @click.stop
           @dblclick.stop
         >
+          <span v-if="snsPreviewCounterText" class="px-2 text-xs text-white/80 font-mono select-none">
+            {{ snsPreviewCounterText }}
+          </span>
+          <div v-if="snsPreviewCounterText" class="h-3 w-px bg-white/20"></div>
           <button
             type="button"
             class="w-8 h-8 rounded-full hover:bg-white/15 flex items-center justify-center text-lg leading-none"
@@ -3364,6 +3405,100 @@ const closeImagePreview = () => {
   document.body.style.overflow = ''
 }
 
+const snsPreviewImageItems = computed(() => {
+  const items = []
+  const list = Array.isArray(posts.value) ? posts.value : []
+  for (let pIdx = 0; pIdx < list.length; pIdx++) {
+    const post = list[pIdx]
+    const mediaList = Array.isArray(post?.media) ? post.media : []
+    for (let mIdx = 0; mIdx < mediaList.length; mIdx++) {
+      const m = mediaList[mIdx]
+      if (!m) continue
+      // 视频媒体跳过，仅保留图片和实况照片
+      if (Number(m.type || 0) === 6) continue
+      items.push({
+        post,
+        media: m,
+        idx: mIdx
+      })
+    }
+  }
+  return items
+})
+
+const currentSnsPreviewIndex = computed(() => {
+  const ctx = previewCtx.value
+  if (!ctx || previewIsVideo.value) return -1
+  const items = snsPreviewImageItems.value
+  if (!items.length) return -1
+
+  const curPostId = String(ctx.post?.id || ctx.post?.tid || '')
+  const curIdx = Number(ctx.idx ?? 0)
+
+  // 1. 优先根据发帖 ID 与媒体序号精确匹配
+  let found = items.findIndex((it) => {
+    const itPostId = String(it.post?.id || it.post?.tid || '')
+    return itPostId === curPostId && it.idx === curIdx
+  })
+  if (found !== -1) return found
+
+  // 2. 根据帖子对象引用匹配
+  found = items.findIndex((it) => it.post === ctx.post && it.idx === curIdx)
+  if (found !== -1) return found
+
+  // 3. 根据媒体唯一 ID 或 URL 匹配
+  const curMediaId = String(ctx.media?.id || '')
+  const curUrl = String(ctx.media?.url || '')
+  if (curMediaId || curUrl) {
+    found = items.findIndex((it) => {
+      if (curMediaId && String(it.media?.id || '') === curMediaId) return true
+      if (curUrl && String(it.media?.url || '') === curUrl) return true
+      return false
+    })
+    if (found !== -1) return found
+  }
+
+  return -1
+})
+
+const canSwitchSnsPreviewImage = computed(() => {
+  if (previewIsVideo.value) return false
+  return snsPreviewImageItems.value.length > 1 && currentSnsPreviewIndex.value !== -1
+})
+
+const snsPreviewCounterText = computed(() => {
+  const total = snsPreviewImageItems.value.length
+  const cur = currentSnsPreviewIndex.value
+  if (total <= 1 || cur < 0) return ''
+  return `${cur + 1} / ${total}`
+})
+
+const switchSnsPreviewImage = (direction) => {
+  if (previewIsVideo.value) return
+  const items = snsPreviewImageItems.value
+  if (!items.length || items.length <= 1) return
+
+  const curIdx = currentSnsPreviewIndex.value
+  if (curIdx < 0) return
+
+  const step = Number(direction || 0) < 0 ? -1 : 1
+  const nextIdx = (curIdx + step + items.length) % items.length
+  const target = items[nextIdx]
+  if (!target) return
+
+  // 当向后连续浏览到末尾附近（倒数 3 张以内）且有更多朋友圈未拉取时，后台自动静默预加载下一页
+  if (step > 0 && nextIdx >= items.length - 3 && hasMore.value && !isLoading.value) {
+    if (typeof loadPosts === 'function') {
+      void loadPosts({ reset: false })
+    }
+  }
+
+  openImagePreview(target.post, target.media, target.idx)
+}
+
+const showPrevSnsPreviewImage = () => switchSnsPreviewImage(-1)
+const showNextSnsPreviewImage = () => switchSnsPreviewImage(1)
+
 const onMediaClick = (post, m, idx = 0) => {
   if (!process.client) return
   const mt = Number(m?.type || 0)
@@ -4423,12 +4558,30 @@ const onGlobalClick = () => {
 
 const onGlobalKeyDown = (e) => {
   if (!process.client) return
-  if (String(e?.key || '') === 'Escape') {
+  const key = String(e?.key || '')
+
+  if (previewCtx.value && !previewIsVideo.value) {
+    if (key === 'ArrowLeft' || key === 'ArrowUp') {
+      e.preventDefault()
+      showPrevSnsPreviewImage()
+      return
+    }
+    if (key === 'ArrowRight' || key === 'ArrowDown') {
+      e.preventDefault()
+      showNextSnsPreviewImage()
+      return
+    }
+  }
+
+  if (key === 'Escape') {
     if (exportModalOpen.value) {
       closeExportModal()
       return
     }
-    if (previewCtx.value) closeImagePreview()
+    if (previewCtx.value) {
+      closeImagePreview()
+      return
+    }
     if (contextMenu.value.visible) closeContextMenu()
   }
 }
