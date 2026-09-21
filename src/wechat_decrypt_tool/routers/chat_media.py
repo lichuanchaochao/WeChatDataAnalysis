@@ -65,6 +65,8 @@ from ..media_helpers import (
     _try_strip_media_prefix,
 )
 from .. import cdn_image_service
+from ..export_images import select_export_image, cache_export_image
+from ..image_quality import image_dimensions, image_payload_score
 from ..chat_helpers import (
     _decode_message_content,
     _extract_md5_from_packed_info,
@@ -2663,7 +2665,76 @@ async def get_chat_image(
         cachedMediaType=cached_media_type,
     )
 
-    if cached_path and (not prefer_live) and (not fetch_remote):
+    is_known_large = False
+    if cached_path:
+        quality_json = cached_path.with_suffix(".quality.json")
+        if quality_json.is_file():
+            try:
+                q_meta = json.loads(quality_json.read_text(encoding="utf-8"))
+                if q_meta.get("thumbnail") is False:
+                    is_known_large = True
+            except Exception:
+                pass
+
+    # 若已有经校验的高清原图缓存且非强制探测，直接毫秒级返回
+    if cached_path and is_known_large and (not prefer_live) and (not fetch_remote):
+        trace(
+            "response:ready",
+            result="decrypted-cache-hit",
+            mediaType=cached_media_type,
+            bytes=len(cached_data or b""),
+        )
+        return _build_cached_media_response(request, cached_data, cached_media_type)
+
+    # 优先从本地微信会话目录只读查找更清晰的大图版本（100% 本地只读、零网络、零风控）
+    if username or md5:
+        try:
+            best_export = await asyncio.to_thread(
+                select_export_image,
+                account_dir=account_dir,
+                username=str(username or ""),
+                md5=str(md5 or ""),
+                file_id=str(file_id or ""),
+                initial_source=None,
+                media_index=None,
+            )
+            if best_export and best_export.data:
+                is_new_source = True
+                if cached_path:
+                    try:
+                        is_new_source = best_export.source.resolve() != cached_path.resolve()
+                    except Exception:
+                        is_new_source = str(best_export.source) != str(cached_path)
+
+                # 若探测到非缩略图（真实高清大图）且来自新数据源，自动原子升级缓存并直接返回
+                if not best_export.thumbnail and is_new_source:
+                    if md5 and _is_valid_md5(str(md5)):
+                        try:
+                            await asyncio.to_thread(cache_export_image, account_dir, str(md5).lower(), best_export)
+                        except Exception:
+                            pass
+                    trace(
+                        "response:ready",
+                        result="local-hd-discovered",
+                        mediaType=f"image/{best_export.extension}",
+                        bytes=len(best_export.data),
+                    )
+                    return _build_cached_media_response(request, best_export.data, f"image/{best_export.extension}")
+                elif not prefer_live and not fetch_remote:
+                    cur_score = image_payload_score(cached_data, cached_media_type) if cached_data else (-1, -1)
+                    new_score = image_payload_score(best_export.data, f"image/{best_export.extension}")
+                    if is_new_source and (new_score > cur_score or (not cached_path)):
+                        if md5 and _is_valid_md5(str(md5)):
+                            try:
+                                await asyncio.to_thread(cache_export_image, account_dir, str(md5).lower(), best_export)
+                            except Exception:
+                                pass
+                        return _build_cached_media_response(request, best_export.data, f"image/{best_export.extension}")
+        except Exception as e:
+            logger.debug("本地大图自动升级探测异常: %s", e)
+
+    # 若未找到更高清大图但已有可用缩略图缓存，平滑返回已有图像
+    if cached_path and not prefer_live and not fetch_remote:
         trace(
             "response:ready",
             result="decrypted-cache-hit",
@@ -3068,10 +3139,19 @@ async def get_chat_image(
             payload, cdn_media_type = cdn_result
             trace("response:ready", result="cdn-download", mediaType=cdn_media_type, bytes=len(payload))
             return _build_cached_media_response(request, payload, cdn_media_type)
-        trace("response:error", result="large-image-not-found")
-        raise HTTPException(status_code=404, detail="Large image not found locally or via CDN.")
+        if chosen and data and media_type.startswith("image/"):
+            pass
+        elif cached_data and cached_media_type:
+            trace("response:ready", result="fallback-cached-on-remote-miss")
+            return _build_cached_media_response(request, cached_data, cached_media_type)
+        else:
+            trace("response:error", result="large-image-not-found")
+            raise HTTPException(status_code=404, detail="Large image not found locally or via CDN.")
 
     if not chosen:
+        if cached_data and cached_media_type:
+            trace("response:ready", result="fallback-cached-on-no-chosen")
+            return _build_cached_media_response(request, cached_data, cached_media_type)
         trace("response:error", result="decode-failed", decodeAttempts=decode_attempts)
         raise HTTPException(status_code=422, detail="Image found but failed to decode/decrypt.")
 

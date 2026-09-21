@@ -1857,14 +1857,9 @@ export const useChatMessages = ({
     }
   }
 
-  const shouldShowImageLargeReload = (message) => {
-    if (!message || String(message?.renderType || '').trim() !== 'image') return false
-    if (!String(message?.imageUrl || '').trim()) return false
-    return !!(
-      String(message?.imageMd5 || '').trim()
-      || String(message?.imageFileId || '').trim()
-      || String(message?.serverIdStr || message?.serverId || '').trim()
-    )
+  const shouldShowImageLargeReload = (_message) => {
+    // 自动静默从本地按清晰度选择最佳原图，不再展示冗余的人工重试按钮与错误提示
+    return false
   }
 
   const buildManualLargeImageUrl = (message, version = Date.now()) => {

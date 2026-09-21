@@ -558,6 +558,66 @@ class TestChatMediaImageCacheUpgrade(unittest.TestCase):
                 else:
                     os.environ["WECHAT_TOOL_DATA_DIR"] = prev_data
 
+    def test_chat_image_auto_upgrades_from_conversation_attach_dir_without_network(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            account = "wxid_test"
+            username = "wxid_friend"
+            md5 = "11112222333344445555666677778888"
+
+            account_dir = root / "output" / "databases" / account
+            wxid_dir = root / "wxid_source"
+            account_dir.mkdir(parents=True, exist_ok=True)
+            wxid_dir.mkdir(parents=True, exist_ok=True)
+
+            self._seed_contact_db(account_dir / "contact.db", account=account, username=username)
+            self._seed_session_db(account_dir / "session.db", username=username)
+            self._seed_source_info(account_dir, wxid_dir=wxid_dir)
+
+            cached_thumb = self._png_payload(16, 16)
+            original_high = self._png_payload(120, 80)
+            cache_path = self._seed_cached_resource(account_dir, md5=md5, payload=cached_thumb)
+            # Mark the initial cache explicitly as thumbnail
+            quality_json = cache_path.with_suffix(".quality.json")
+            quality_json.write_text(json.dumps({"sha256": hashlib.sha256(cached_thumb).hexdigest(), "thumbnail": True}), encoding="utf-8")
+
+            # Seed original full-size image in attach folder without _t suffix
+            chat_hash = hashlib.md5(username.encode("utf-8")).hexdigest()
+            attach_file = wxid_dir / "msg" / "attach" / chat_hash / "2026-03" / "Img" / f"{md5}.dat"
+            attach_file.parent.mkdir(parents=True, exist_ok=True)
+            attach_file.write_bytes(original_high)
+
+            prev_data = os.environ.get("WECHAT_TOOL_DATA_DIR")
+            client = None
+            try:
+                os.environ["WECHAT_TOOL_DATA_DIR"] = str(root)
+                client = self._build_client()
+                # Ordinary chat message request: NO prefer_live, NO fetch_remote
+                resp = client.get(
+                    "/api/chat/media/image",
+                    params={"account": account, "md5": md5, "username": username},
+                )
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.content, original_high)
+                self.assert_cacheable_chat_image_response(resp)
+                # Verify cache was atomically upgraded
+                cached_file = account_dir / "resource" / md5[:2] / f"{md5}.png"
+                self.assertTrue(cached_file.is_file())
+                self.assertEqual(cached_file.read_bytes(), original_high)
+                # Verify quality metadata updated to thumbnail: false
+                q_meta = json.loads(cached_file.with_suffix(".quality.json").read_text(encoding="utf-8"))
+                self.assertFalse(q_meta.get("thumbnail"))
+            finally:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+                logging.shutdown()
+                if prev_data is None:
+                    os.environ.pop("WECHAT_TOOL_DATA_DIR", None)
+                else:
+                    os.environ["WECHAT_TOOL_DATA_DIR"] = prev_data
+
 
 if __name__ == "__main__":
     unittest.main()
