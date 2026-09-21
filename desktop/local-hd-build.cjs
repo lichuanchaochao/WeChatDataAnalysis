@@ -8,10 +8,10 @@ module.exports = {
   ...original,
   appId: 'local.wechatdataanalysis.hd',
   productName: 'WeChatDataAnalysis-HD',
-  artifactName: 'WeChatDataAnalysis-2.6.0-HD1-Setup.${ext}',
+  artifactName: 'WeChatDataAnalysis-2.6.0-HD2-Setup.${ext}',
   extraMetadata: {
     name: 'wechat-data-analysis-hd',
-    version: '2.6.0-hd.1',
+    version: '2.6.0-hd.2',
     localImageQualityBuild: true,
   },
   publish: null,

@@ -57,9 +57,11 @@ try {
     try {
         Invoke-Checked (Join-Path $desktopRoot 'node_modules\.bin\electron-builder.cmd') @('--win', '--x64', '--publish', 'never', '--config', 'local-hd-build.cjs')
     } finally { Pop-Location }
-    $installer = Join-Path $desktopRoot 'dist\WeChatDataAnalysis-2.6.0-HD1-Setup.exe'
+    $installer = Join-Path $desktopRoot 'dist\WeChatDataAnalysis-2.6.0-HD2-Setup.exe'
     if (-not (Test-Path -LiteralPath $installer)) { throw 'Installer was not generated' }
-    Get-FileHash -LiteralPath $installer -Algorithm SHA256 | Format-List
+    $rootInstaller = Join-Path $repoRoot 'WeChatDataAnalysis-2.6.0-HD2-Setup.exe'
+    Copy-Item -LiteralPath $installer -Destination $rootInstaller -Force
+    Get-FileHash -LiteralPath $rootInstaller -Algorithm SHA256 | Format-List
 } finally {
     Pop-Location
     Stop-Transcript | Out-Null
