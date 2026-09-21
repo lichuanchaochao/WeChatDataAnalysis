@@ -524,7 +524,7 @@
     <!-- 图片预览弹窗 (全局固定定位) -->
     <div v-if="previewImageUrl" 
       class="fixed inset-0 z-[13000] bg-black/90 flex items-center justify-center cursor-zoom-out overflow-hidden"
-      title="滚轮缩放图片，双击重置"
+      title="滚轮缩放图片，双击重置；←/→ 方向键切换上一张/下一张；Esc 退出"
       @click="closeImagePreview"
       @wheel.prevent.stop="onPreviewImageWheel"
     >
@@ -546,7 +546,7 @@
         v-if="canSwitchPreviewImage"
         type="button"
         class="absolute left-4 top-1/2 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white/85 shadow-lg transition hover:bg-black/55 hover:text-white"
-        title="上一张"
+        title="上一张 (也可按 ← 或 ↑ 方向键)"
         @click.stop="showPrevPreviewImage"
       >
         <svg class="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -558,7 +558,7 @@
         v-if="canSwitchPreviewImage"
         type="button"
         class="absolute right-4 top-1/2 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white/85 shadow-lg transition hover:bg-black/55 hover:text-white"
-        title="下一张"
+        title="下一张 (也可按 → 或 ↓ 方向键)"
         @click.stop="showNextPreviewImage"
       >
         <svg class="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">

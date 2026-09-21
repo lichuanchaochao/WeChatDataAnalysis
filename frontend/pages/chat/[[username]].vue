@@ -238,6 +238,8 @@ const {
   scrollToMessageId,
   openImagePreview,
   closeImagePreview,
+  showPrevPreviewImage,
+  showNextPreviewImage,
   openVideoPreview,
   closeVideoPreview,
   onPreviewVideoError,
@@ -960,6 +962,19 @@ const onGlobalKeyDown = (event) => {
     event.preventDefault()
     void openChatMessageSearch()
     return
+  }
+
+  if (previewImageUrl.value) {
+    if (key === 'ArrowLeft' || key === 'ArrowUp') {
+      event.preventDefault()
+      showPrevPreviewImage()
+      return
+    }
+    if (key === 'ArrowRight' || key === 'ArrowDown') {
+      event.preventDefault()
+      showNextPreviewImage()
+      return
+    }
   }
 
   if (key === 'Escape') {
