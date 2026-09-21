@@ -77,4 +77,23 @@ describe('AI 来源定位',()=>{
     await expect(locate()).resolves.toBe(true)
     expect(fetch).toHaveBeenCalledTimes(2)
   })
+  it('退出定位时仅隐藏横幅且保留消息在原地，返回最新时重置定位状态', async () => {
+    const { args, search, locate } = setup()
+    await locate('target')
+    expect(args.searchContext.value.active).toBe(true)
+    expect(args.searchContext.value.bannerDismissed).toBe(false)
+    expect(args.allMessages.value.chat).toEqual([{ id: 'target' }])
+
+    // 用户点击退出定位
+    await search.exitSearchContext()
+    expect(args.searchContext.value.active).toBe(true)
+    expect(args.searchContext.value.bannerDismissed).toBe(true)
+    expect(search.searchContextBannerText.value).toBe('')
+    // 关键断言：消息列表绝不跳回 recent，严格留在 target
+    expect(args.allMessages.value.chat).toEqual([{ id: 'target' }])
+
+    // 用户点击返回最新
+    await search.returnToLatestMessages()
+    expect(args.searchContext.value.active).toBe(false)
+  })
 })

@@ -137,7 +137,7 @@
         </div>
       </div>
 
-      <div v-if="searchContext.active" class="chat-context-banner px-6 py-2 border-b border-emerald-200 bg-emerald-50 flex items-center gap-3">
+      <div v-if="searchContext.active && !searchContext.bannerDismissed" class="chat-context-banner px-6 py-2 border-b border-emerald-200 bg-emerald-50 flex items-center gap-3">
         <div class="chat-context-banner-title text-sm text-emerald-900">
           {{ searchContextBannerText }}
         </div>
@@ -145,7 +145,7 @@
           <button type="button" class="chat-context-banner-btn text-xs px-3 py-1 rounded-md bg-white border border-emerald-200 hover:bg-emerald-100" @click="exitSearchContext">
             退出定位
           </button>
-          <button type="button" class="chat-context-banner-btn2 text-xs px-3 py-1 rounded-md bg-white border border-gray-200 hover:bg-gray-50" @click="refreshSelectedMessages">
+          <button type="button" class="chat-context-banner-btn2 text-xs px-3 py-1 rounded-md bg-white border border-gray-200 hover:bg-gray-50" @click="handleReturnToLatest">
             返回最新
           </button>
         </div>
@@ -221,8 +221,20 @@ export default defineComponent({
     state: { type: Object, required: true }
   },
   setup(props) {
+    const handleReturnToLatest = async () => {
+      if (typeof props.state?.returnToLatestMessages === 'function') {
+        await props.state.returnToLatestMessages()
+      } else if (props.state?.searchContext?.value) {
+        props.state.searchContext.value = { ...props.state.searchContext.value, active: false }
+      }
+      if (typeof props.state?.refreshSelectedMessages === 'function') {
+        await props.state.refreshSelectedMessages()
+      }
+    }
+
     return {
-      ...props.state
+      ...props.state,
+      handleReturnToLatest
     }
   }
 })

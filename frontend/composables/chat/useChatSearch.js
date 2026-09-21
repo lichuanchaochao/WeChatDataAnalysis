@@ -12,6 +12,7 @@ const DEFAULT_CHAT_SOURCE = 'auto'
 
 export const createEmptySearchContext = () => ({
   active: false,
+  bannerDismissed: false,
   kind: 'search',
   label: '',
   username: '',
@@ -611,7 +612,7 @@ if (String(selectedContact.value?.username || '').trim() === u) return selectedC
 return buildTransientSearchTargetContact({ username: u, displayName, avatar, isGroup })
 }
 const searchContextBannerText = computed(() => {
-if (!searchContext.value?.active) return ''
+if (!searchContext.value?.active || searchContext.value?.bannerDismissed) return ''
 const kind = String(searchContext.value.kind || 'search')
 if (kind === 'date') {
   const label = String(searchContext.value.label || '').trim()
@@ -1234,36 +1235,41 @@ messageSearchOffset.value = Number(messageSearchOffset.value || 0) + messageSear
 await runMessageSearch({ reset: false, source: 'load-more' })
 }
 
-const exitSearchContext = async () => {
+const exitSearchContext = async ({ resetToSaved = false } = {}) => {
 if (!searchContext.value?.active) return
 const u = String(searchContext.value.username || '').trim()
 const saved = searchContext.value.savedMessages
 const savedMeta = searchContext.value.savedMeta
 
-if (u && saved) {
-  allMessages.value = { ...allMessages.value, [u]: saved }
-}
-if (u && savedMeta) {
-  messagesMeta.value = { ...messagesMeta.value, [u]: savedMeta }
+if (resetToSaved) {
+  if (u && saved) {
+    allMessages.value = { ...allMessages.value, [u]: saved }
+  }
+  if (u && savedMeta) {
+    messagesMeta.value = { ...messagesMeta.value, [u]: savedMeta }
+  }
+  searchContext.value = createEmptySearchContext()
+} else {
+  // 点击“退出定位”：仅隐藏横幅与高亮，当前消息列表原地保留，保持向下双向加载能力
+  searchContext.value = {
+    ...searchContext.value,
+    bannerDismissed: true
+  }
 }
 
-searchContext.value = {
-  active: false,
-  kind: 'search',
-  label: '',
-  username: '',
-  anchorId: '',
-  anchorIndex: -1,
-  hasMoreBefore: false,
-  hasMoreAfter: false,
-  loadingBefore: false,
-  loadingAfter: false,
-  savedMessages: null,
-  savedMeta: null
-}
 highlightMessageId.value = ''
 await nextTick()
 updateJumpToBottomState()
+}
+
+const returnToLatestMessages = async () => {
+searchContext.value = createEmptySearchContext()
+highlightMessageId.value = ''
+await nextTick()
+if (typeof loadMoreMessages === 'function') {
+  // 回到最新底端：若有外层 refreshSelectedMessages 优先，否则重新定位到底部
+  updateJumpToBottomState()
+}
 }
 
 const locateSearchHit = async (hit) => {
@@ -1336,6 +1342,7 @@ if (searchContext.value?.active && searchContext.value.username !== targetUserna
 if (!searchContext.value?.active) {
   searchContext.value = {
     active: true,
+    bannerDismissed: false,
     kind: 'search',
     label: '',
     username: targetUsername,
@@ -1349,6 +1356,7 @@ if (!searchContext.value?.active) {
     savedMeta: messagesMeta.value[targetUsername] || null
   }
 } else {
+  searchContext.value.bannerDismissed = false
   searchContext.value.kind = 'search'
   searchContext.value.label = ''
   searchContext.value.anchorId = String(hit.id)
@@ -1493,6 +1501,7 @@ const previousContext = { ...searchContext.value }
 if (!searchContext.value?.active) {
   searchContext.value = {
     active: true,
+    bannerDismissed: false,
     kind: kindNorm,
     label: labelNorm,
     username: u,
@@ -1506,6 +1515,7 @@ if (!searchContext.value?.active) {
     savedMeta: messagesMeta.value[u] || null
   }
 } else {
+  searchContext.value.bannerDismissed = false
   searchContext.value.kind = kindNorm
   searchContext.value.label = labelNorm
   searchContext.value.anchorId = anchor
@@ -2260,6 +2270,7 @@ if (c.scrollTop <= 240 && autoLoadReady.value && hasMoreMessages.value && !isLoa
     runMessageSearch,
     loadMoreSearchResults,
     exitSearchContext,
+    returnToLatestMessages,
     locateSearchHit,
     locateByAnchorId,
     prepareAnchorContext,
