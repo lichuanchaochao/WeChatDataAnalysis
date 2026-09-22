@@ -99,14 +99,15 @@ function stageWindowsPrivatePkiEvidence({
   if (!sourceValue) throw new Error("WCE_WINDOWS_PRIVATE_ROOT_CERT_PATH is required.");
   const source = path.resolve(sourceValue);
   requireRegularFile(source, "private-PKI root certificate");
-  const actualRoot = crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex").toUpperCase();
+  const certBuffer = fs.readFileSync(source);
+  const actualRoot = crypto.createHash("sha256").update(certBuffer).digest("hex").toUpperCase();
   if (actualRoot !== expectedRoot) {
     throw new Error("Private-PKI root certificate file does not match the protected root pin.");
   }
   requireRegularFile(privatePkiPolicySource, "private-PKI verification policy");
 
   resetSigningEvidenceDirectory(signingDir);
-  fs.copyFileSync(source, path.join(signingDir, PRIVATE_PKI_ROOT_NAME));
+  fs.writeFileSync(path.join(signingDir, PRIVATE_PKI_ROOT_NAME), certBuffer);
   fs.copyFileSync(privatePkiPolicySource, path.join(signingDir, PRIVATE_PKI_POLICY_NAME));
   return { rootSha256: actualRoot, signingDir };
 }

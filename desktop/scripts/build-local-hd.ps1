@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $desktopRoot = Join-Path $repoRoot 'desktop'
+$NativeResources = [IO.Path]::GetFullPath($NativeResources)
 $nativeDir = Join-Path $NativeResources 'backend\native'
 $pin = Get-Content -LiteralPath (Join-Path $desktopRoot 'resources\native-core-source-windows.json') -Raw | ConvertFrom-Json
 foreach ($entry in $pin.nativeFiles.PSObject.Properties) {
