@@ -47,26 +47,33 @@ def _ensure_weflow_host_executable() -> str:
     bin_dir.mkdir(parents=True, exist_ok=True)
     weflow_exe = bin_dir / "WeFlow.exe"
 
-    src_exe = Path(sys.executable).resolve()
+    if getattr(sys, "frozen", False):
+        src_exe = Path(sys.executable).resolve()
+    else:
+        # In development mode, if running inside a virtualenv, sys.executable is a shim launcher
+        # that delegates to python.exe (which causes GetModuleFileName to return python.exe).
+        # We must use the base python executable so GetModuleFileName returns WeFlow.exe.
+        base_py = Path(sys.base_exec_prefix) / "python.exe"
+        if base_py.is_file():
+            src_exe = base_py
+        else:
+            src_exe = Path(sys.executable).resolve()
+
     if not weflow_exe.is_file() or weflow_exe.stat().st_size != src_exe.stat().st_size:
         try:
-            # Try hardlink first
             if weflow_exe.exists():
                 weflow_exe.unlink(missing_ok=True)
-            os.link(src_exe, weflow_exe)
-        except Exception:
-            try:
-                shutil.copyfile(src_exe, weflow_exe)
-            except Exception as exc:
-                logger.warning(f"Failed to create WeFlow.exe in bin dir: {exc}")
-                # Fallback to temp directory
-                tmp_exe = Path(tempfile.gettempdir()) / "WeFlow.exe"
-                if not tmp_exe.is_file() or tmp_exe.stat().st_size != src_exe.stat().st_size:
-                    try:
-                        shutil.copyfile(src_exe, tmp_exe)
-                    except Exception:
-                        pass
-                return str(tmp_exe)
+            shutil.copyfile(src_exe, weflow_exe)
+        except Exception as exc:
+            logger.warning(f"Failed to create WeFlow.exe in bin dir: {exc}")
+            # Fallback to temp directory
+            tmp_exe = Path(tempfile.gettempdir()) / "WeFlow.exe"
+            if not tmp_exe.is_file() or tmp_exe.stat().st_size != src_exe.stat().st_size:
+                try:
+                    shutil.copyfile(src_exe, tmp_exe)
+                except Exception:
+                    pass
+            return str(tmp_exe)
 
     return str(weflow_exe)
 
@@ -253,11 +260,29 @@ def _execute_worker_action(action: str, account: str, session_ids: List[str]) ->
         json.dump(payload, tf)
         tmp_payload_path = tf.name
 
+    worker_env = os.environ.copy()
+    worker_env.pop("WECHAT_TOOL_NATIVE_CORE_ENDPOINT", None)
+    worker_env.pop("WECHAT_TOOL_DESKTOP_PARENT_PID", None)
+    worker_env.pop("ELECTRON_RUN_AS_NODE", None)
+    src_dir = str(Path(__file__).resolve().parents[1])
+    python_paths = [src_dir]
+
+    if getattr(sys, "frozen", False):
+        cmd = [weflow_exe, "--wcdb-worker", tmp_payload_path]
+    else:
+        site_packages = [p for p in sys.path if "site-packages" in p]
+        python_paths.extend(site_packages)
+        worker_env["PATH"] = str(sys.base_exec_prefix) + os.pathsep + worker_env.get("PATH", "")
+        cmd = [weflow_exe, "-m", "wechat_decrypt_tool.backend_entry", "--wcdb-worker", tmp_payload_path]
+
+    worker_env["PYTHONPATH"] = os.pathsep.join(python_paths) + (os.pathsep + worker_env.get("PYTHONPATH", "") if worker_env.get("PYTHONPATH") else "")
+
     try:
         proc = subprocess.run(
-            [weflow_exe, str(worker_script), tmp_payload_path],
+            cmd,
             capture_output=True,
             text=True,
+            env=worker_env,
             timeout=120,
         )
         if proc.returncode != 0:

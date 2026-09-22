@@ -17,6 +17,10 @@ from pathlib import Path
 # divert worker processes, every worker tries to bind the backend port again.
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    if "--wcdb-worker" in sys.argv[1:] or any("worker.py" in arg for arg in sys.argv[1:]):
+        from wechat_decrypt_tool.anti_revoke.worker import run_worker_cli
+        run_worker_cli()
+        sys.exit(0)
 
 import uvicorn
 
@@ -119,6 +123,10 @@ def main() -> None:
         return
     if "--smoke-sns-wasm" in sys.argv[1:]:
         _run_sns_wasm_smoke()
+        return
+    if "--wcdb-worker" in sys.argv[1:] or any("worker.py" in arg for arg in sys.argv[1:]):
+        from wechat_decrypt_tool.anti_revoke.worker import run_worker_cli
+        run_worker_cli()
         return
 
     start_desktop_parent_watchdog_from_env()

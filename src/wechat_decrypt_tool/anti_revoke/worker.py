@@ -27,9 +27,15 @@ def _resolve_wcdb_dll() -> str:
     raise FileNotFoundError("wcdb_api.dll not found in candidate paths")
 
 
-def main() -> None:
-    if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
-        with open(sys.argv[1], "r", encoding="utf-8") as f:
+def run_worker_cli() -> None:
+    payload_file = None
+    for arg in sys.argv[1:]:
+        if os.path.isfile(arg) and not arg.endswith(".py") and not arg.endswith(".exe"):
+            payload_file = arg
+            break
+
+    if payload_file:
+        with open(payload_file, "r", encoding="utf-8") as f:
             payload = json.load(f)
     else:
         payload = json.loads(sys.stdin.read())
@@ -72,7 +78,16 @@ def main() -> None:
                 os.add_dll_directory(dll_dir)
             except Exception:
                 pass
+        os.environ["PATH"] = dll_dir + ";" + os.environ.get("PATH", "")
         lib = ctypes.CDLL(dll_path)
+
+        if hasattr(lib, "InitProtection"):
+            try:
+                lib.InitProtection.argtypes = [ctypes.c_char_p]
+                lib.InitProtection.restype = ctypes.c_int32
+                lib.InitProtection(dll_dir.encode("utf-8"))
+            except Exception:
+                pass
 
         rc = lib.wcdb_init()
         if rc != 0:
@@ -101,7 +116,8 @@ def main() -> None:
             for sid in session_ids:
                 out_err = ctypes.c_void_p()
                 i_rc = lib.wcdb_install_message_anti_revoke_trigger(handle.value, str(sid).encode("utf-8"), ctypes.byref(out_err))
-                results[str(sid)] = (i_rc == 0)
+                err_msg = ctypes.string_at(out_err).decode("utf-8", "ignore") if out_err.value else ""
+                results[str(sid)] = (i_rc == 0 or "already_installed" in err_msg.lower())
         elif action == "uninstall":
             lib.wcdb_uninstall_message_anti_revoke_trigger.argtypes = [ctypes.c_int64, ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
             lib.wcdb_uninstall_message_anti_revoke_trigger.restype = ctypes.c_int32
@@ -114,10 +130,11 @@ def main() -> None:
         lib.wcdb_close_account.restype = ctypes.c_int32
         lib.wcdb_close_account(handle.value)
 
-        print(json.dumps({"success": True, "results": results}))
+        rows = [{"sessionId": sid, "success": bool(ok)} for sid, ok in results.items()]
+        print(json.dumps({"success": True, "action": action, "results": results, "rows": rows}))
     finally:
         pass
 
 
 if __name__ == "__main__":
-    main()
+    run_worker_cli()
