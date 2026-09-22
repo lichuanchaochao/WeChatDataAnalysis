@@ -406,8 +406,9 @@ const toggleSession = async (session) => {
     const res = await fn(selectedAccount.value, [session.username])
     if (res?.success) {
       session.installed = willInstall
-      installedCount.value += (willInstall ? 1 : -1)
+      installedCount.value = sessions.value.filter(s => s.installed).length
       showToast(willInstall ? `已为「${session.displayName}」安装防撤回` : `已还原「${session.displayName}」的防撤回`)
+      await refreshData()
     } else {
       showToast(res?.error || '操作失败', 'error')
     }
@@ -428,6 +429,15 @@ const installBatch = async (sessionIds) => {
       const ok = res.rows?.filter(r => r.success).length || 0
       const failed = res.rows?.filter(r => !r.success).length || 0
       showToast(`防撤回安装完成，成功 ${ok}${failed ? ` / 失败 ${failed}` : ''}`)
+      const successSet = new Set(
+        res.rows?.filter(r => r.success).map(r => r.sessionId || r.session_id) || sessionIds
+      )
+      for (const s of sessions.value) {
+        if (successSet.has(s.username)) {
+          s.installed = true
+        }
+      }
+      installedCount.value = sessions.value.filter(s => s.installed).length
       await refreshData()
     } else {
       showToast(res?.error || '批量安装失败', 'error')
@@ -447,6 +457,15 @@ const uninstallBatch = async (sessionIds) => {
     if (res?.success) {
       const ok = res.rows?.filter(r => r.success).length || 0
       showToast(`防撤回已还原，成功 ${ok}`)
+      const successSet = new Set(
+        res.rows?.filter(r => r.success).map(r => r.sessionId || r.session_id) || sessionIds
+      )
+      for (const s of sessions.value) {
+        if (successSet.has(s.username)) {
+          s.installed = false
+        }
+      }
+      installedCount.value = sessions.value.filter(s => s.installed).length
       await refreshData()
     } else {
       showToast(res?.error || '批量还原失败', 'error')

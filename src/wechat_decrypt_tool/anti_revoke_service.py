@@ -19,14 +19,27 @@ from .key_store import (
 )
 from .logging_config import get_logger
 from .media_helpers import _resolve_account_db_storage_dir
-from .native_core_realtime import close_account, exec_query, open_account
+from .native_core_realtime import (
+    close_account,
+    exec_query,
+    get_avatar_urls,
+    get_display_names,
+    open_account,
+)
 
 logger = get_logger(__name__)
 
-# Excluded system usernames (similar to Weport's filter)
-_IGNORED_PREFIXES = (
-    "gh_",
+# Excluded system usernames and service folders (similar to Weport's filter)
+_EXCLUDED_USERNAMES = {
     "weixin",
+    "brandsessionholder",
+    "brandservicesessionholder",
+    "notifymessage",
+    "opencustomerservicemsg",
+    "notification_messages",
+    "userexperience_alarm",
+    "helper_folders",
+    "@helper_folders",
     "qqmail",
     "fmessage",
     "medianote",
@@ -38,7 +51,21 @@ _IGNORED_PREFIXES = (
     "voiceinput",
     "linkedinpartner",
     "blogapp",
-)
+}
+_IGNORED_PREFIXES = ("gh_", "@placeholder")
+
+
+def _is_valid_chat_session(username: str) -> bool:
+    """Filter out official accounts, service holders, and internal system message folders."""
+    if not username or username == "place_holder":
+        return False
+    if username in _EXCLUDED_USERNAMES:
+        return False
+    if any(username.startswith(prefix) for prefix in _IGNORED_PREFIXES):
+        return False
+    if "@placeholder" in username or "@kefu.openim" in username or "@weclaw" in username:
+        return False
+    return True
 
 
 def _ensure_weflow_host_executable() -> str:
@@ -114,32 +141,44 @@ def _resolve_account_info(account: str) -> tuple[Path, str, str]:
     return db_storage_dir, native_wxid, hex_key
 
 
-def _get_installed_trigger_tables(handle: int, db_storage_dir: Path) -> Set[str]:
-    """Fast, safe read-only detection of all tables that have anti_revoke triggers installed."""
+def _get_installed_trigger_info(handle: int, db_storage_dir: Path) -> tuple[Set[str], Set[str]]:
+    """Fast, safe read-only detection of all tables with anti_revoke triggers and pending sessions."""
     installed_tables: Set[str] = set()
+    pending_sessions: Set[str] = set()
     message_dir = db_storage_dir / "message"
     if not message_dir.is_dir():
-        return installed_tables
+        return installed_tables, pending_sessions
 
-    for i in range(10):
-        db_file = message_dir / f"message_{i}.db"
-        if not db_file.is_file():
-            continue
+    for db_file in sorted(message_dir.glob("*.db")):
         try:
             rows = exec_query(
                 handle,
                 kind="message",
-                path=db_file,
+                path=str(db_file),
                 sql="SELECT tbl_name FROM sqlite_master WHERE type='trigger' AND name LIKE 'anti_revoke_block_insert_%'",
             )
             for r in rows:
-                tbl = str(r.get("tbl_name") or "")
+                tbl = str(r.get("tbl_name") or "").strip()
                 if tbl:
                     installed_tables.add(tbl)
         except Exception as exc:
             logger.debug(f"Error querying triggers from {db_file.name}: {exc}")
 
-    return installed_tables
+        try:
+            p_rows = exec_query(
+                handle,
+                kind="message",
+                path=str(db_file),
+                sql="SELECT session_id FROM _weflow_anti_revoke_pending",
+            )
+            for r in p_rows:
+                sid = str(r.get("session_id") or "").strip()
+                if sid:
+                    pending_sessions.add(sid)
+        except Exception:
+            pass
+
+    return installed_tables, pending_sessions
 
 
 def get_anti_revoke_sessions(account: str) -> Dict[str, Any]:
@@ -156,58 +195,44 @@ def get_anti_revoke_sessions(account: str) -> Dict[str, Any]:
     )
 
     try:
-        # 1. Query installed trigger tables
-        installed_tables = _get_installed_trigger_tables(handle, db_storage_dir)
+        # 1. Query installed trigger tables and pending sessions
+        installed_tables, pending_sessions = _get_installed_trigger_info(handle, db_storage_dir)
 
         # 2. Query sessions from SessionTable
         session_rows = exec_query(
             handle,
             kind="session",
-            path=session_db,
+            path=str(session_db),
             sql="SELECT username, last_timestamp, summary FROM SessionTable ORDER BY sort_timestamp DESC",
         )
 
-        # 3. Query contact display names from contact.db if available
-        contact_map: Dict[str, Dict[str, str]] = {}
-        contact_db = db_storage_dir / "contact" / "contact.db"
-        if contact_db.is_file():
-            try:
-                c_rows = exec_query(
-                    handle,
-                    kind="contact",
-                    path=contact_db,
-                    sql="SELECT username, alias, local_type, nickname, remark, small_head_img_url FROM Contact",
-                )
-                for cr in c_rows:
-                    u = str(cr.get("username") or "")
-                    if u:
-                        contact_map[u] = {
-                            "displayName": str(cr.get("remark") or cr.get("nickname") or cr.get("alias") or u),
-                            "avatarUrl": str(cr.get("small_head_img_url") or ""),
-                        }
-            except Exception as c_exc:
-                logger.debug(f"Failed to load contact display names: {c_exc}")
+        # 3. Filter valid chat sessions
+        valid_rows: List[Dict[str, Any]] = []
+        valid_usernames: List[str] = []
+        for r in session_rows:
+            u = str(r.get("username") or "").strip()
+            if _is_valid_chat_session(u):
+                valid_rows.append(r)
+                valid_usernames.append(u)
+
+        # 4. Resolve real display names and avatars via native_core_realtime
+        display_names = get_display_names(handle, valid_usernames)
+        avatar_urls = get_avatar_urls(handle, valid_usernames)
 
         sessions: List[Dict[str, Any]] = []
         installed_count = 0
 
-        for row in session_rows:
+        for row in valid_rows:
             username = str(row.get("username") or "").strip()
-            if not username or username == "place_holder":
-                continue
-            if any(username.startswith(prefix) for prefix in _IGNORED_PREFIXES):
-                continue
-
             tbl_hash = hashlib.md5(username.encode("utf-8")).hexdigest()
             tbl_name = f"Msg_{tbl_hash}"
-            is_installed = tbl_name in installed_tables
+            is_installed = (tbl_name in installed_tables) or (username in pending_sessions)
 
             if is_installed:
                 installed_count += 1
 
-            contact_info = contact_map.get(username, {})
-            display_name = contact_info.get("displayName") or username
-            avatar_url = contact_info.get("avatarUrl") or ""
+            display_name = display_names.get(username) or username
+            avatar_url = avatar_urls.get(username) or ""
 
             sessions.append({
                 "username": username,
