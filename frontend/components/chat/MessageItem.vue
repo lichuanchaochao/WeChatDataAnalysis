@@ -15,8 +15,20 @@
       </div>
     </div>
 
-    <div v-if="message.renderType === 'system'" class="flex justify-center">
-      <div class="message-time-divider px-2.5 py-0.5 text-xs">
+    <div v-if="message.renderType === 'system'" class="flex justify-center my-1.5">
+      <div
+        v-if="isAntiRevokeNotice(message.content)"
+        class="inline-flex items-center gap-1.5 px-3 py-1 text-xs rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 shadow-sm"
+        title="该撤回已被防撤回触发器拦截，原消息仍保留在聊天记录中"
+      >
+        <svg class="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <path d="m9 12 2 2 4-4" />
+        </svg>
+        <span class="font-medium text-[11px] bg-amber-200/70 dark:bg-amber-900/70 text-amber-900 dark:text-amber-200 px-1 rounded">防撤回拦截</span>
+        <span>{{ message.content }}</span>
+      </div>
+      <div v-else class="message-time-divider px-2.5 py-0.5 text-xs">
         {{ message.content }}
       </div>
     </div>
@@ -102,9 +114,14 @@ export default defineComponent({
     message: { type: Object, required: true }
   },
   setup(props) {
+    const isAntiRevokeNotice = (content) => {
+      const text = String(content || '')
+      return text.includes('尝试撤回此消息') || text.includes('撤回了')
+    }
     return {
       ...props.state,
-      message: toRef(props, 'message')
+      message: toRef(props, 'message'),
+      isAntiRevokeNotice
     }
   }
 })

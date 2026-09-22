@@ -17,7 +17,9 @@
           </div>
           <div class="resource-sidebar-muted mt-0.5 text-[11px]" :class="{ 'privacy-blur': privacyMode }">
             {{ resourceItems.length }} 个资源
-            <span v-if="resourceHasMore"> · 向下滚动继续加载</span>
+            <span v-if="resourceLoading || resourceAutoLoadingAll" class="text-[#03C160]"> · 正在自动展开全部...</span>
+            <span v-else-if="!resourceHasMore && resourceItems.length"> · 已全部展开</span>
+            <span v-else-if="resourceHasMore"> · 还有更多资源</span>
           </div>
         </div>
         <select
@@ -116,17 +118,25 @@
         <div v-else-if="!resourceLoading" class="resource-empty flex h-full min-h-[220px] items-center justify-center text-center text-[13px]">
           当前会话暂无图片或视频资源
         </div>
-        <div v-if="resourceLoading" class="resource-status py-4 text-center text-[12px]">加载中...</div>
+        <div v-if="resourceLoading || resourceAutoLoadingAll" class="resource-status py-4 text-center text-[12px] flex items-center justify-center gap-1.5 text-gray-500">
+          <svg class="animate-spin h-3.5 w-3.5 text-[#03C160]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <span>正在自动展开全部资源 (已载入 {{ resourceItems.length }} 项)...</span>
+        </div>
         <div v-else-if="resourceHasMore && resourceItems.length" class="py-4 text-center">
           <button
             type="button"
             class="resource-load-more rounded-full border px-3 py-1.5 text-[12px] transition-colors"
             @click="loadResourceItems()"
           >
-            继续加载
+            继续加载全部
           </button>
         </div>
-        <div v-else-if="!resourceHasMore && resourceItems.length" class="resource-status py-4 text-center text-[12px]">已加载全部资源</div>
+        <div v-else-if="!resourceHasMore && resourceItems.length" class="resource-status py-4 text-center text-[12px] text-gray-400">
+          已加载全部资源 (共 {{ resourceItems.length }} 项)
+        </div>
       </div>
     </aside>
   </transition>
@@ -173,26 +183,12 @@ export default defineComponent({
 
     const ensureResourceViewportFilled = async () => {
       await nextTick()
-      const el = resourceScrollRef.value
-      if (!el) return
       if (!readMaybeRef(props.state.resourceSidebarOpen)) return
       if (!readMaybeRef(props.state.resourceHasMore)) return
       if (readMaybeRef(props.state.resourceLoading)) return
 
-      const mode = getResourceMode()
-      const maxAutoLoads = mode === 'year' ? 1 : (mode === 'month' ? 4 : 3)
-      let count = 0
-      while (
-        count < maxAutoLoads
-        && readMaybeRef(props.state.resourceSidebarOpen)
-        && readMaybeRef(props.state.resourceHasMore)
-        && !readMaybeRef(props.state.resourceLoading)
-        && Number(el.scrollHeight || 0) <= Number(el.clientHeight || 0) + 160
-      ) {
-        count += 1
-        await props.state.loadResourceItems?.()
-        await nextTick()
-      }
+      // Auto-continue loading all resources to completion
+      await props.state.loadResourceItems?.({ autoContinue: true })
     }
 
     const scheduleEnsureResourceViewportFilled = () => {

@@ -154,11 +154,14 @@ export const useChatMessages = ({
   const resourceTimeGroup = ref('day')
   const resourceItems = ref([])
   const resourceLoading = ref(false)
+  const resourceAutoLoadingAll = ref(false)
   const resourceError = ref('')
   const resourceHasMore = ref(true)
   const resourceOffset = ref(0)
-  const resourcePageSize = 32
+  const resourcePageSize = 100
   let resourceScrollCheckScheduled = false
+  let resourceAutoLoadTimer = null
+  let resourceAutoLoadTaskId = 0
 
   const voiceRefs = new Map()
   const currentPlayingVoice = ref(null)
@@ -1023,18 +1026,25 @@ export const useChatMessages = ({
   }
 
   const resetResourceState = () => {
+    resourceAutoLoadTaskId += 1
+    if (resourceAutoLoadTimer) {
+      clearTimeout(resourceAutoLoadTimer)
+      resourceAutoLoadTimer = null
+    }
+    resourceAutoLoadingAll.value = false
     resourceItems.value = []
     resourceOffset.value = 0
     resourceHasMore.value = true
     resourceError.value = ''
   }
 
-  const loadResourceItems = async ({ reset = false } = {}) => {
+  const loadResourceItems = async ({ reset = false, autoContinue = true } = {}) => {
     if (!selectedAccount.value || !selectedContact.value?.username) return
     if (resourceLoading.value) return
     if (!reset && !resourceHasMore.value) return
     if (reset) resetResourceState()
 
+    const currentTaskId = resourceAutoLoadTaskId
     resourceLoading.value = true
     resourceError.value = ''
     try {
@@ -1047,6 +1057,7 @@ export const useChatMessages = ({
         render_types: 'image,video',
         source: DEFAULT_CHAT_SOURCE
       })
+      if (currentTaskId !== resourceAutoLoadTaskId) return
       const raw = Array.isArray(response?.messages) ? response.messages : []
       loadLargeImagePreferences()
       const mapped = raw.map(normalizeMessage).map(toResourceItem).filter(Boolean)
@@ -1061,21 +1072,58 @@ export const useChatMessages = ({
       resourceOffset.value = (reset ? 0 : resourceOffset.value) + raw.length
       resourceHasMore.value = !!response?.hasMore
     } catch (error) {
-      resourceError.value = error?.message || '加载资源失败'
+      if (currentTaskId === resourceAutoLoadTaskId) {
+        resourceError.value = error?.message || '加载资源失败'
+      }
     } finally {
-      resourceLoading.value = false
+      if (currentTaskId === resourceAutoLoadTaskId) {
+        resourceLoading.value = false
+      }
+    }
+
+    if (
+      autoContinue &&
+      currentTaskId === resourceAutoLoadTaskId &&
+      resourceSidebarOpen.value &&
+      resourceHasMore.value &&
+      !resourceError.value
+    ) {
+      resourceAutoLoadingAll.value = true
+      resourceAutoLoadTimer = setTimeout(() => {
+        resourceAutoLoadTimer = null
+        if (
+          currentTaskId === resourceAutoLoadTaskId &&
+          resourceSidebarOpen.value &&
+          resourceHasMore.value &&
+          !resourceLoading.value
+        ) {
+          void loadResourceItems({ reset: false, autoContinue: true })
+        } else {
+          resourceAutoLoadingAll.value = false
+        }
+      }, 30)
+    } else {
+      resourceAutoLoadingAll.value = false
     }
   }
 
   const openResourceSidebar = async () => {
     resourceSidebarOpen.value = true
     if (!resourceItems.value.length) {
-      await loadResourceItems({ reset: true })
+      await loadResourceItems({ reset: true, autoContinue: true })
+    } else if (resourceHasMore.value && !resourceLoading.value) {
+      void loadResourceItems({ reset: false, autoContinue: true })
     }
   }
 
   const closeResourceSidebar = () => {
     resourceSidebarOpen.value = false
+    resourceAutoLoadingAll.value = false
+    resourceAutoLoadTaskId += 1
+    if (resourceAutoLoadTimer) {
+      clearTimeout(resourceAutoLoadTimer)
+      resourceAutoLoadTimer = null
+    }
   }
 
   const toggleResourceSidebar = async () => {
@@ -3256,6 +3304,7 @@ export const useChatMessages = ({
     resourceGroupOptions,
     resourceGridStyle,
     resourceLoading,
+    resourceAutoLoadingAll,
     resourceError,
     resourceHasMore,
     voiceRefs,

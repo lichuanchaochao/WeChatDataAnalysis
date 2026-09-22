@@ -647,6 +647,9 @@ function main() {
     pyInstallerAddData(skillDir, "skills/wechat-mcp-copilot"),
     "--add-data",
     pyInstallerAddData(macosXkeyContractPath, "wechat_decrypt_tool/resources"),
+    ...(fs.existsSync(path.join(repoRoot, "src", "wechat_decrypt_tool", "anti_revoke"))
+      ? ["--add-data", pyInstallerAddData(path.join(repoRoot, "src", "wechat_decrypt_tool", "anti_revoke"), "wechat_decrypt_tool/anti_revoke")]
+      : []),
     "--collect-all",
     "faster_whisper",
     "--collect-all",
@@ -702,6 +705,13 @@ function main() {
   fs.cpSync(runtimeNativeDir, packagedNativeDir, { recursive: true, force: true });
   if (integrityNativeBinary) {
     fs.copyFileSync(integrityNativeBinary, path.join(packagedNativeDir, path.basename(integrityNativeBinary)));
+  }
+
+  const antiRevokeSourceDir = path.join(repoRoot, "src", "wechat_decrypt_tool", "anti_revoke");
+  if (fs.existsSync(antiRevokeSourceDir)) {
+    const packagedAntiRevokeDir = path.join(distDir, "anti_revoke");
+    fs.rmSync(packagedAntiRevokeDir, { recursive: true, force: true });
+    fs.cpSync(antiRevokeSourceDir, packagedAntiRevokeDir, { recursive: true, force: true });
   }
 
   // Historical builds shipped pyproject.toml as a "project root" marker, which let

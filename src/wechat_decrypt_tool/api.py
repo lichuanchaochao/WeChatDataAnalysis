@@ -1,4 +1,4 @@
-﻿"""微信解密工具的FastAPI Web服务器"""
+"""微信解密工具的FastAPI Web服务器"""
 
 import mimetypes
 import os
@@ -158,6 +158,8 @@ app.include_router(_favorites_router)
 app.include_router(_record_export_router)
 app.include_router(_system_router)
 app.include_router(_cdn_router)
+from .routers.anti_revoke import router as _anti_revoke_router
+app.include_router(_anti_revoke_router)
 
 
 # Python's MIME database inherits Windows registry overrides.  Keep the

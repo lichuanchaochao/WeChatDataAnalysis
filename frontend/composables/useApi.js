@@ -817,6 +817,41 @@ export const useApi = () => {
     return await request(`/sns/exports/${encodeURIComponent(String(exportId))}`, { method: 'DELETE' })
   }
 
+  // 防撤回 (Anti-Revoke)
+  const getAntiRevokeSessions = async (account) => {
+    if (!account) throw new Error('Missing account')
+    return await request(`/anti_revoke/sessions?account=${encodeURIComponent(String(account))}`)
+  }
+
+  const installAntiRevokeTriggers = async (account, sessionIds = []) => {
+    if (!account) throw new Error('Missing account')
+    return await request('/anti_revoke/install', {
+      method: 'POST',
+      body: JSON.stringify({ account, session_ids: sessionIds })
+    })
+  }
+
+  const uninstallAntiRevokeTriggers = async (account, sessionIds = []) => {
+    if (!account) throw new Error('Missing account')
+    return await request('/anti_revoke/uninstall', {
+      method: 'POST',
+      body: JSON.stringify({ account, session_ids: sessionIds })
+    })
+  }
+
+  const getAntiRevokeConfig = async (account) => {
+    if (!account) throw new Error('Missing account')
+    return await request(`/anti_revoke/config?account=${encodeURIComponent(String(account))}`)
+  }
+
+  const setAntiRevokeConfig = async (account, autoApply = false) => {
+    if (!account) throw new Error('Missing account')
+    return await request('/anti_revoke/config', {
+      method: 'POST',
+      body: JSON.stringify({ account, auto_apply: !!autoApply })
+    })
+  }
+
   // 联系人
   const listChatContacts = async (params = {}) => {
     const query = new URLSearchParams()
@@ -1290,6 +1325,11 @@ export const useApi = () => {
     listFinderRecords,
     listPaymentRecords,
     listRevokeRecords,
+    getAntiRevokeSessions,
+    installAntiRevokeTriggers,
+    uninstallAntiRevokeTriggers,
+    getAntiRevokeConfig,
+    setAntiRevokeConfig,
     listGeneralSearchRecords,
     listFavorites,
     exportRecords,

@@ -97,6 +97,10 @@
           "ffmpeg.README",
           "LICENSE"
         ]
+      },
+      {
+        "from": "resources/anti_revoke",
+        "to": "anti_revoke"
       }
     ],
     "win": {

@@ -230,6 +230,31 @@
         </div>
       </div>
 
+      <!-- Anti-Revoke 防撤回 -->
+      <div
+        class="sidebar-rail-action w-full h-[var(--sidebar-rail-step)] flex items-center justify-center cursor-pointer group"
+        title="防撤回"
+        @click="goAntiRecall"
+      >
+        <div class="sidebar-rail-plate w-[var(--sidebar-rail-btn)] h-[var(--sidebar-rail-btn)] rounded-md flex items-center justify-center transition-colors bg-transparent">
+          <div class="sidebar-rail-icon w-[var(--sidebar-rail-icon)] h-[var(--sidebar-rail-icon)]" :class="{ 'sidebar-rail-icon-active': isAntiRecallRoute }">
+            <svg
+              class="w-full h-full"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              <path d="m9 12 2 2 4-4" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
       <!-- Export -->
       <div
         v-if="showGlobalExportEntry"
@@ -783,6 +808,7 @@ const isMiniProgramsRoute = computed(() => route.path?.startsWith('/mini-program
 const isFinderRoute = computed(() => route.path?.startsWith('/finder'))
 const isPaymentsRoute = computed(() => route.path?.startsWith('/payments'))
 const isWrappedRoute = computed(() => route.path?.startsWith('/wrapped'))
+const isAntiRecallRoute = computed(() => route.path?.startsWith('/antirecall'))
 
 const goChat = async () => { await navigateTo('/chat') }
 const goSns = async () => { await navigateTo('/sns') }
@@ -793,6 +819,7 @@ const goMiniPrograms = async () => { await navigateTo('/mini-programs') }
 const goFinder = async () => { await navigateTo('/finder') }
 const goPayments = async () => { await navigateTo('/payments') }
 const goWrapped = async () => { await navigateTo('/wrapped') }
+const goAntiRecall = async () => { await navigateTo('/antirecall') }
 const goGuide = async () => { await navigateTo('/') }
 const goSettings = () => { openSettingsDialog() }
 
