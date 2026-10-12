@@ -70,16 +70,18 @@ from .chat_incremental_export import (
     materialize_folder_archive,
     missing_conversation_keys,
     normalize_pending_media,
+    ordered_conversation_keys,
     prepare_folder_context,
 )
 from .logging_config import get_logger
-from .export_images import cache_export_image, select_export_image
 from .media_helpers import (
     MediaPathIndex,
     _convert_silk_to_browser_audio,
     _detect_image_media_type,
     _fallback_search_media_by_file_id,
     _read_and_maybe_decrypt_media,
+    _prefer_local_image_resource,
+    _image_resource_lock,
     _resolve_account_db_storage_dir,
     _resolve_account_wxid_dir,
     _resolve_media_path_for_kind,
@@ -1223,16 +1225,9 @@ def _replace_ordered_export_index_item(
     index: dict[str, dict[str, Any]],
     item: dict[str, Any],
 ) -> None:
-    """Replace an index item while retaining the old remove-then-append order.
-
-    ``dict`` preserves insertion order.  Removing the existing conversation
-    before assigning it again is therefore equivalent to the previous
-    ``[... if convDir != current]`` plus ``append`` implementation, without
-    rescanning the complete index for every conversation.
-    """
+    """Update existing entries in place and append newly exported conversations."""
 
     conv_dir = str(item.get("convDir") or "")
-    index.pop(conv_dir, None)
     index[conv_dir] = item
 
 
@@ -1442,7 +1437,7 @@ def _media_kinds_from_selected_types(selected_render_types: Optional[set[str]]) 
     # even when users only select `chatHistory` in the renderType filter.
     if "chathistory" in selected_render_types:
         out.update({"image", "emoji", "video", "video_thumb", "voice", "file"})
-    if "image" in selected_render_types:
+    if "image" in selected_render_types or "link" in selected_render_types:
         out.add("image")
     if "emoji" in selected_render_types:
         out.add("emoji")
@@ -2171,6 +2166,13 @@ class ChatExportManager:
                 missing_files=list(opts.get("missingFiles") or []),
                 reset_baseline=bool(opts.get("resetBaseline")),
             )
+            if folder_context.location_type_skipped:
+                # 探测、渲染都要和基线用同一份类型清单，否则已导出的历史会被误判为有差异。
+                want_types = set(folder_context.config.get("messageTypes") or [])
+                job.options["messageTypes"] = [
+                    value for value in message_types_raw if _normalize_render_type_key(value) in want_types
+                ]
+                _safe_trace(trace, "incremental_location_type_skipped", messageTypes=sorted(want_types))
             preferred_missing_owner_keys = {
                 incremental_conversation_key(salt=folder_context.salt, username=username)
                 for username in target_usernames
@@ -2490,10 +2492,8 @@ class ChatExportManager:
                 )
                 _safe_trace(trace, "zip_opened", durationMs=_elapsed_ms(phase_started))
                 # Keep the indexes keyed by conversation directory while the
-                # export is running.  Folder exports replace existing entries
-                # and intentionally move them to the end; dict pop+assign
-                # preserves that order in O(1), unlike filtering a growing
-                # list for every conversation.
+                # export is running. Assignment preserves existing positions
+                # in O(1), and new conversations are appended at the end.
                 html_index_by_conv_dir: dict[str, dict[str, Any]] = {}
                 excel_index_by_conv_dir: dict[str, dict[str, Any]] = {}
                 html_index_items: list[dict[str, Any]] = []
@@ -2507,7 +2507,8 @@ class ChatExportManager:
                         if isinstance(folder_context.old_state.get("conversations"), dict)
                         else {}
                     )
-                    for old_value in old_conversations.values():
+                    for old_key in ordered_conversation_keys(folder_context.old_state):
+                        old_value = old_conversations[old_key]
                         if not isinstance(old_value, dict):
                             continue
                         old_session = old_value.get("session")
@@ -2750,7 +2751,11 @@ class ChatExportManager:
 
                         session_value = {
                             "username": "" if privacy_mode else conv_username,
-                            "displayName": (f"会话 {idx:04d}" if privacy_mode else conv_name),
+                            "displayName": (
+                                str((session_items_by_conv_dir.get(conv_dir) or {}).get("displayName")
+                                    or f"会话 {len(session_items_by_conv_dir) + 1:04d}")
+                                if privacy_mode else conv_name
+                            ),
                             "isGroup": bool(conv_is_group),
                             "convDir": conv_dir,
                             "avatarPath": "" if privacy_mode else conv_avatar_path,
@@ -3654,6 +3659,10 @@ class ChatExportManager:
                 warning_parts: list[str] = []
                 if folder_context.reset_baseline:
                     warning_parts.append("已重置基线并完整重建本次选择的会话。")
+                if folder_context.location_type_skipped:
+                    warning_parts.append(
+                        "该增量目录的基线不含“位置”类型，本次仍按基线的消息类型更新，未导出位置消息；需要时请重置增量基线或改用新目录。"
+                    )
                 recovered_files = int(job.incremental.get("filesRecovered") or 0)
                 if recovered_files:
                     warning_parts.append(f"已补回 {recovered_files} 个缺失或异常的受管理文件。")
@@ -7228,8 +7237,8 @@ def _write_conversation_html(
                         heading = str(msg.get("title") or msg.get("content") or safe_url).strip()
                         abstract = str(msg.get("content") or "").strip()
                         preview = str(msg.get("thumbUrl") or "").strip()
-                        preview_url = ""
-                        if is_http_url(preview):
+                        preview_url = offline_path(msg, "image")
+                        if not preview_url and is_http_url(preview):
                             local = maybe_download_remote_image(preview)
                             preview_url = local or preview
                         variant = str(msg.get("linkStyle") or "").strip().lower()
@@ -8280,6 +8289,40 @@ def _attach_offline_media(
 
     offline: list[dict[str, Any]] = []
 
+    if rt == "link" and "image" in media_kinds:
+        thumbnail = str(msg.get("thumbUrl") or "").strip()
+        # CDN 缩略图标识不是可访问的网址；优先查找该消息在会话附件目录中的本地图片。
+        if thumbnail and not thumbnail.lower().startswith(("http://", "https://")):
+            candidates: list[str] = []
+            try:
+                local_id, created = int(msg.get("localId") or 0), int(msg.get("createTime") or 0)
+                if local_id > 0 and created > 0:
+                    candidates.append(f"{local_id}_{created}")
+            except (TypeError, ValueError):
+                pass
+            if re.fullmatch(r"[0-9a-fA-F]{32,512}", thumbnail):
+                candidates.append(thumbnail)
+            arc, is_new, used_id = "", False, ""
+            for candidate in candidates:
+                arc, is_new = _materialize_media(
+                    zf=zf, account_dir=account_dir, conv_username=conv_username,
+                    kind="image", md5=candidate if _is_md5(candidate) else "", file_id=candidate,
+                    media_written=media_written, suggested_name="", media_index=media_index,
+                    require_image=True, cache_namespace=conv_username,
+                )
+                if arc:
+                    used_id = candidate
+                    break
+            if arc:
+                # 与 offlineMedia 一致，路径相对导出根目录；不写入用户机器的绝对路径。
+                msg["thumbUrl"] = arc
+                offline.append({"kind": "image", "path": arc, "fileId": used_id})
+                if is_new:
+                    with lock:
+                        job.progress.media_copied += 1
+            else:
+                record_missing("image", candidates[0] if candidates else thumbnail)
+
     if rt == "image" and "image" in media_kinds:
         primary_md5 = str(msg.get("imageMd5") or "").strip().lower()
         primary_file_id = str(msg.get("imageFileId") or "").strip()
@@ -8673,6 +8716,19 @@ def _materialize_voice(
     return arc, True
 
 
+def _guard_image_materialization(function):
+    @functools.wraps(function)
+    def guarded(*args, **kwargs):
+        md5 = str(kwargs.get("md5") or "")
+        if kwargs.get("kind") == "image" and _is_md5(md5):
+            # 预解密可能同时升级缓存格式，导出复制期间必须保护当前路径。
+            with _image_resource_lock(kwargs["account_dir"], md5):
+                return function(*args, **kwargs)
+        return function(*args, **kwargs)
+    return guarded
+
+
+@_guard_image_materialization
 def _materialize_media(
     *,
     zf: zipfile.ZipFile,
@@ -8684,11 +8740,16 @@ def _materialize_media(
     media_written: dict[str, str],
     suggested_name: str,
     media_index: Optional[MediaPathIndex],
+    require_image: bool = False,
+    cache_namespace: str = "",
 ) -> tuple[str, bool]:
     started_at = time.perf_counter()
     ident = md5 or file_id
     if not ident:
         return "", False
+    if require_image:
+        # local_id 与时间戳可能跨会话重复；缩略图缓存和文件名都按会话隔离。
+        ident = "thumb_" + hashlib.sha256(f"{cache_namespace}\0{ident}".encode("utf-8")).hexdigest()[:32]
 
     key = f"{kind}:{ident}"
     if key in media_written:
@@ -8868,39 +8929,18 @@ def _materialize_media(
         except Exception:
             pass
 
-    if kind == "image":
-        selected = select_export_image(
-            account_dir=account_dir, username=conv_username, md5=md5,
-            file_id=file_id, initial_source=src, media_index=media_index,
-        )
-        if selected is not None:
-            arc = f"media/images/{_safe_name(ident, max_len=120)}.{selected.extension}"
-            zf.writestr(arc, selected.data)
-            # Preserve the selected encrypted/container source as well. This is
-            # especially useful for WXGF, whose display representation is decoded.
-            source_arc = ""
-            if selected.source.suffix.lower() == ".dat":
-                source_arc = arc + ".source.dat"
-                zf.write(selected.source, arcname=source_arc)
-            zf.writestr(arc + ".quality.json", json.dumps({
-                "schemaVersion": 1,
-                "image": arc,
-                "source": source_arc,
-                "width": selected.width,
-                "height": selected.height,
-                "sha256": hashlib.sha256(selected.data).hexdigest(),
-                "status": "thumbnail_only" if selected.thumbnail else "best_local_candidate",
-                "originalConfirmed": False,
-                "selection": "decoded_pixel_area_then_bytes",
-            }, ensure_ascii=False, indent=2).encode("utf-8"))
-            try:
-                cache_export_image(account_dir, md5, selected)
-            except OSError:
-                logger.warning("图片已导出，但更新图片缓存失败", exc_info=True)
-            media_written[key] = arc
-            return arc, True
-        # Do not write encrypted or invalid bytes under a successful image entry.
-        src = None
+    if require_image and src is not None and re.fullmatch(r"\d+_\d+", file_id) and conv_username:
+        # 同秒本地消息编号不是全局唯一键，禁止索引兜底命中另一会话的附件目录。
+        parts = [part.lower() for part in Path(src).parts]
+        if "attach" in parts:
+            index = parts.index("attach")
+            expected = hashlib.md5(conv_username.encode("utf-8")).hexdigest()
+            if index + 1 >= len(parts) or parts[index + 1] != expected:
+                return "", False
+
+    if src and kind == "image":
+        # 导出也要独立修复旧缩略图缓存，不能依赖用户先在聊天页逐张加载大图。
+        src = _prefer_local_image_resource(account_dir, md5, source=src, username=conv_username) or src
 
     if not src:
         if media_index is not None:
@@ -9003,6 +9043,8 @@ def _materialize_media(
         try:
             data, mt = _read_and_maybe_decrypt_media(src, account_dir=account_dir)
         except Exception:
+            if require_image:
+                return "", False
             try:
                 zf.write(src, arcname=arc)
             except Exception:
@@ -9011,6 +9053,8 @@ def _materialize_media(
             return arc, True
 
         mt = str(mt or "").strip()
+        if require_image and _detect_image_media_type(data[:32]) not in {"image/png", "image/jpeg", "image/gif", "image/webp"}:
+            return "", False
         if mt == "image/png":
             ext2 = "png"
         elif mt == "image/jpeg":

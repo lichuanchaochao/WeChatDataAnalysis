@@ -206,6 +206,16 @@
                 <span>{{ opt.label }}</span>
               </label>
             </div>
+            <label v-if="exportFormat === 'html'" class="chat-export-type-option chat-export-transcription-option">
+              <input v-model="exportDownloadRemoteMedia" type="checkbox" :disabled="privacyMode" />
+              <span>下载远程缩略图（需联网；关闭可显著加快导出）</span>
+            </label>
+            <label class="chat-export-type-option chat-export-transcription-option"
+              :class="{ 'chat-export-type-option--selected': exportTranscribeVoice && !privacyMode && exportMessageTypes.includes('voice') }">
+              <input v-model="exportTranscribeVoice" type="checkbox"
+                :disabled="privacyMode || !exportMessageTypes.includes('voice')" />
+              <span>导出时将语音转为文字（使用设置中选择的本地模型）</span>
+            </label>
           </section>
 
           <section
@@ -291,16 +301,6 @@
                   <span class="chat-export-incremental-card__hint">未选中的既有会话会继续保留</span>
                 </div>
               </div>
-              <label class="chat-export-reset-option" :class="{ 'chat-export-reset-option--selected': exportRecheckImages }">
-                <input v-model="exportRecheckImages" type="checkbox" class="sr-only" />
-                <span class="chat-export-checkbox" :class="{ 'chat-export-checkbox--checked': exportRecheckImages }" aria-hidden="true">
-                  <i class="fa-solid fa-check"></i>
-                </span>
-                <span class="chat-export-reset-option__copy">
-                  <strong>重新检查媒体并升级已有图片</strong>
-                  <small>重建所选会话并用本地更清晰的图片替换旧图；无需重置基线，耗时可能增加</small>
-                </span>
-              </label>
               <label class="chat-export-reset-option" :class="{ 'chat-export-reset-option--selected': exportResetBaseline }">
                 <input v-model="exportResetBaseline" type="checkbox" class="sr-only" />
                 <span class="chat-export-checkbox" :class="{ 'chat-export-checkbox--checked': exportResetBaseline }" aria-hidden="true">
@@ -451,7 +451,7 @@
               </div>
 
               <div
-                v-if="exportJob.repairCandidates?.length || exportJob.unresolvedMedia?.conversations?.length"
+                v-if="exportJob.repairCandidates?.length || exportJob.unresolvedMedia?.conversations?.length || exportJob.incremental?.locationTypeSkipped"
                 class="chat-export-folder-result__followups"
                 aria-label="差异与媒体状态"
               >
@@ -496,6 +496,16 @@
                     <i class="fa-solid fa-rotate" aria-hidden="true"></i>
                     重新探测缺失媒体
                   </button>
+                </div>
+
+                <div v-if="exportJob.incremental?.locationTypeSkipped" class="chat-export-followup">
+                  <span class="chat-export-followup__icon" aria-hidden="true">
+                    <i class="fa-solid fa-location-dot"></i>
+                  </span>
+                  <div class="chat-export-followup__copy">
+                    <strong>本次未导出位置消息</strong>
+                    <span>该目录的基线不含“位置”类型，已按基线的消息类型更新；需要时请重置增量基线或改用新目录。</span>
+                  </div>
                 </div>
               </div>
 
@@ -694,6 +704,17 @@ export default defineComponent({
 </script>
 
 <style scoped>
+.chat-export-transcription-option {
+  margin-top: 12px;
+}
+.chat-export-transcription-option:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.chat-export-transcription-option input {
+  accent-color: var(--app-accent);
+}
+
 .chat-export-backdrop {
   position: fixed;
   inset: 0;

@@ -317,6 +317,26 @@
                   <span class="shrink-0 rounded-full bg-[var(--app-surface-muted)] px-2 py-1 text-[10px] text-[var(--app-text-secondary)]">当前：{{ voiceModelText }}</span>
                 </div>
 
+                <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div class="min-w-0">
+                    <label for="voice-model-download-source" class="text-[12px] font-medium text-[var(--app-text-primary)]">模型下载源</label>
+                    <p id="voice-model-download-source-hint" class="mt-0.5 text-[11px] leading-relaxed text-[var(--app-text-muted)]">仅影响新发起的模型下载。连接超时可切换后重试。</p>
+                  </div>
+                  <select
+                    id="voice-model-download-source"
+                    :value="voiceDownloadSource"
+                    :disabled="voiceStatusLoading || voiceDownloadSourceBusy"
+                    :aria-busy="voiceDownloadSourceBusy"
+                    aria-describedby="voice-model-download-source-hint"
+                    class="voice-setting-focus w-full rounded-[6px] border border-[var(--app-border)] bg-[var(--app-surface-bg)] px-2.5 py-1.5 text-[12px] text-[var(--app-text-primary)] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                    @change="setVoiceDownloadSource"
+                  >
+                    <option value="huggingface">官方源（Hugging Face）</option>
+                    <option value="hf-mirror">国内镜像（HF-Mirror）</option>
+                  </select>
+                </div>
+                <ErrorNotice v-if="voiceDownloadSourceError" :message="voiceDownloadSourceError" compact manual class="mt-1.5 text-[11px] text-[var(--danger-color)]" />
+
                 <div v-if="voiceStatusLoading" class="mt-3 grid gap-2 sm:grid-cols-2" aria-label="正在读取模型列表">
                   <div v-for="index in 4" :key="index" class="h-[134px] rounded-[9px] bg-[var(--app-surface-muted)]" />
                 </div>
@@ -925,6 +945,9 @@ const keyRows = computed(() => [
 ])
 
 const voiceStatusLoading = ref(false)
+const voiceDownloadSource = ref('huggingface')
+const voiceDownloadSourceBusy = ref(false)
+const voiceDownloadSourceError = ref('')
 const voiceDeviceBusy = ref(false)
 const voiceDeviceError = ref('')
 const voiceDevicePreference = ref('cpu')
@@ -1278,6 +1301,7 @@ const applyVoiceTranscriptionStatus = (status) => {
     }
   }).filter((item) => item.id)
   voiceStatusReason.value = String(status.reason || '').trim()
+  voiceDownloadSource.value = status.modelDownloadSource === 'hf-mirror' ? 'hf-mirror' : 'huggingface'
   voiceCuda.value = status.cuda && typeof status.cuda === 'object' ? status.cuda : null
   voiceFallbackReason.value = String(status.fallbackReason || '').trim()
   scheduleVoiceModelDownloadPolling()
@@ -1570,6 +1594,23 @@ const refreshVoiceTranscriptionStatus = async () => {
     voiceDeviceError.value = e?.message || '读取语音转文字运行状态失败'
   } finally {
     voiceStatusLoading.value = false
+  }
+}
+
+const setVoiceDownloadSource = async (event) => {
+  const select = event.target
+  const next = select.value
+  if (voiceDownloadSourceBusy.value || next === voiceDownloadSource.value) return
+  voiceDownloadSourceBusy.value = true
+  voiceDownloadSourceError.value = ''
+  try {
+    const resp = await api.setVoiceTranscriptionSettings({ download_source: next })
+    applyVoiceTranscriptionStatus(resp?.configuration || resp)
+  } catch (error) {
+    voiceDownloadSourceError.value = error?.message || '切换模型下载源失败，请重试'
+  } finally {
+    select.value = voiceDownloadSource.value
+    voiceDownloadSourceBusy.value = false
   }
 }
 

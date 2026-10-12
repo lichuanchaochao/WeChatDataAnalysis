@@ -135,6 +135,17 @@ def config_fingerprint(config: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical_json(config)).hexdigest()
 
 
+def _config_without_location(config: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """返回去掉“位置”后的配置；本次没有勾选位置，或只勾选了位置时返回 None。"""
+
+    requested = list(config.get("messageTypes") or [])
+    kept = [value for value in requested if value != "location"]
+    # 空清单在基线里表示“不过滤、导出全部类型”，不能把“只勾选位置”当成它。
+    if not kept or len(kept) == len(requested):
+        return None
+    return {**config, "messageTypes": kept}
+
+
 def conversation_key(*, salt: str, username: str) -> str:
     payload = f"{str(salt or '')}\0{str(username or '')}".encode("utf-8", errors="replace")
     return hashlib.sha256(payload).hexdigest()
@@ -275,6 +286,7 @@ class ChatFolderContext:
     unresolved_media_conversations: list[dict[str, Any]] = field(default_factory=list)
     unresolved_missing_owner_keys: set[str] = field(default_factory=set)
     metadata_changed: bool = False
+    location_type_skipped: bool = False
 
     @property
     def export_runtime_id(self) -> str:
@@ -289,6 +301,47 @@ def _read_json_file(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ChatIncrementalError("incremental_baseline_invalid", "增量基线损坏，请选择新目录。")
     return value
+
+
+def ordered_conversation_keys(state: dict[str, Any]) -> list[str]:
+    """Restore presentation order independently of JSON object key sorting."""
+
+    conversations = state.get("conversations") if isinstance(state.get("conversations"), dict) else {}
+    saved_order = state.get("conversationOrder")
+    if not isinstance(saved_order, list):
+        saved_order = state.get("legacyConversationOrder")
+    result: dict[str, None] = {}
+    for key in saved_order if isinstance(saved_order, list) else []:
+        if isinstance(key, str) and isinstance(conversations.get(key), dict):
+            result[key] = None
+    for key, value in conversations.items():
+        if isinstance(value, dict):
+            result[str(key)] = None
+    return list(result)
+
+
+def _restore_legacy_conversation_order(state: dict[str, Any], target_root: Path) -> None:
+    """Use the existing HTML catalog when an older baseline lacks order."""
+
+    if isinstance(state.get("conversationOrder"), list):
+        return
+    try:
+        text = (target_root / "assets/chat-sessions.js").read_text(encoding="utf-8").strip()
+        prefix = "window.__WCE_FOLDER_SESSIONS__="
+        if not text.startswith(prefix):
+            return
+        catalog = json.loads(text[len(prefix):].rstrip(";\r\n"))
+        by_directory = {
+            str(value.get("directory") or ""): key
+            for key, value in state["conversations"].items()
+        }
+        order = [by_directory[item["convDir"]] for item in catalog["items"]
+                 if isinstance(item, dict) and item.get("convDir") in by_directory]
+        if order:
+            state["legacyConversationOrder"] = order
+    except (OSError, ValueError, KeyError, TypeError):
+        # Missing/old catalogs must not prevent an otherwise valid export.
+        return
 
 
 def _baseline_is_owned(value: dict[str, Any]) -> bool:
@@ -359,8 +412,11 @@ def prepare_folder_context(
         raise ChatIncrementalError("incremental_baseline_invalid", "增量基线损坏或不属于聊天导出，请选择新目录。")
     if owned:
         _validate_baseline_paths(old_state)
+        if desktop_output and target_root is not None:
+            _restore_legacy_conversation_order(old_state, target_root)
 
     desired_hash = config_fingerprint(config)
+    location_type_skipped = False
     if owned:
         baseline_account = str(old_state.get("account") or "")
         baseline_account_fingerprint = str(old_state.get("accountFingerprint") or "")
@@ -371,11 +427,19 @@ def prepare_folder_context(
         )
         if not account_matches:
             raise ChatIncrementalError("incremental_account_mismatch", "该增量目录属于其他微信账号，请选择新目录。")
-        if str(old_state.get("configFingerprint") or "") != desired_hash and not reset_baseline:
-            raise ChatIncrementalError(
-                "incremental_config_mismatch",
-                "导出格式或筛选配置与该增量目录不一致，请选择新目录或重置后完整重建。",
-            )
+        baseline_hash = str(old_state.get("configFingerprint") or "")
+        if baseline_hash != desired_hash and not reset_baseline:
+            # “位置”是导出面板后来补上的类型，而且默认勾选。基线只差这一项时沿用基线的类型清单，
+            # 已导出的历史与后续追加保持同一口径；需要位置消息时重置基线即可。
+            baseline_config = _config_without_location(config)
+            if baseline_config is None or config_fingerprint(baseline_config) != baseline_hash:
+                raise ChatIncrementalError(
+                    "incremental_config_mismatch",
+                    "导出格式或筛选配置与该增量目录不一致，请选择新目录或重置后完整重建。",
+                )
+            config = baseline_config
+            desired_hash = baseline_hash
+            location_type_skipped = True
 
     if reset_baseline:
         if old_state and not owned:
@@ -421,6 +485,7 @@ def prepare_folder_context(
         salt=salt,
         missing_files=missing,
         reset_baseline=bool(reset_baseline),
+        location_type_skipped=location_type_skipped,
     )
 
 
@@ -653,22 +718,14 @@ def materialize_folder_archive(
                 new_managed.setdefault(owner, set()).add(path)
             payload = archive.read(info)
             if _is_owned_resource_path(path):
-                # Quality evidence and retained DAT belong to the image they
-                # describe, including when several conversations share it.
-                reference_path = path
-                if path.startswith("media/images/"):
-                    for suffix in (".quality.json", ".source.dat"):
-                        if path.endswith(suffix) and path[:-len(suffix)] in infos:
-                            reference_path = path[:-len(suffix)]
-                            break
-                path_bytes = reference_path.encode("utf-8", errors="replace")
+                path_bytes = path.encode("utf-8", errors="replace")
                 referenced_by = {
                     key
                     for key, search_payloads in owner_search_payloads.items()
                     if any(path_bytes in search_payload for search_payload in search_payloads)
                 }
                 explicit_owners = (getattr(job, "options", {}) or {}).get("_folderResourceOwners") or {}
-                for username in explicit_owners.get(reference_path, []) if isinstance(explicit_owners, dict) else []:
+                for username in explicit_owners.get(path, []) if isinstance(explicit_owners, dict) else []:
                     key = conversation_key(salt=context.salt, username=str(username or ""))
                     if key in rendered_keys:
                         referenced_by.add(key)
@@ -835,9 +892,15 @@ def materialize_folder_archive(
             else generated_at
         ),
         "conversations": persisted_conversations,
+        "conversationOrder": ordered_conversation_keys({
+            "conversations": persisted_conversations,
+            "conversationOrder": ordered_conversation_keys(context.old_state),
+        }),
         "files": current_files,
     }
     state_bytes = json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
+    # Persist an order migration even when no message/media files changed.
+    state_unchanged = quiet_noop and context.old_state.get("conversationOrder") == state["conversationOrder"]
     state_path = _write_staged_file(staging_dir, STATE_FILE_NAME, state_bytes)
     state_file_id = uuid.uuid4().hex
     job.staged_files[state_file_id] = state_path
@@ -856,6 +919,7 @@ def materialize_folder_archive(
         "filesReused": max(0, len(current_files) - len(staged_entries)),
         "filesRemoved": len(stale),
         "filesRecovered": recovered_count,
+        "locationTypeSkipped": bool(context.location_type_skipped),
     }
     job.repair_candidates = list(context.repair_candidates)
     job.unresolved_media = {
@@ -871,7 +935,7 @@ def materialize_folder_archive(
             "path": STATE_FILE_NAME,
             "size": len(state_bytes),
             "sha256": hashlib.sha256(state_bytes).hexdigest(),
-            "unchanged": quiet_noop,
+            "unchanged": state_unchanged,
         },
         "stats": dict(job.incremental),
     }
@@ -900,7 +964,7 @@ def materialize_folder_archive(
         destination.unlink(missing_ok=True)
 
     state_destination = target_root / STATE_FILE_NAME
-    if not quiet_noop or not state_destination.is_file():
+    if not state_unchanged or not state_destination.is_file():
         os.replace(state_path, state_destination)
     job.folder_path = target_root
     job.staged_files = {}
@@ -923,6 +987,7 @@ __all__ = [
     "materialize_folder_archive",
     "missing_conversation_keys",
     "normalize_pending_media",
+    "ordered_conversation_keys",
     "normalize_relative_path",
     "prepare_folder_context",
     "privacy_account_token",
