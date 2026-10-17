@@ -52,10 +52,22 @@ class SemanticIndex:
 
     def stats(self, generation):
         """统计当前可用索引，区别于单次任务新增或重算的片段数量。"""
+        if not hasattr(self, "_stats_cache"):
+            self._stats_cache = {}
+        try:
+            mtime = self.path.stat().st_mtime_ns if self.path.is_file() else 0
+        except OSError:
+            mtime = 0
+        cached = self._stats_cache.get(generation)
+        if cached and cached[0] == mtime:
+            return cached[1]
+
         with self.connection() as db:
             messages = db.execute('SELECT count(*) FROM messages WHERE generation=?', (generation,)).fetchone()[0]
             chunks = db.execute('SELECT count(*) FROM chunks WHERE generation=?', (generation,)).fetchone()[0]
-        return {'messages': messages, 'chunks': chunks}
+        res = {'messages': messages, 'chunks': chunks}
+        self._stats_cache[generation] = (mtime, res)
+        return res
 
     @observed('index.commit')
     def commit(self, generation, messages, chunks, vectors, job, checkpoint=None):

@@ -12,6 +12,7 @@ export const useChatExport = ({ api, apiBase, contacts, selectedAccount, selecte
   const exportFormat = ref('html')
   const exportOutputMode = ref('zip')
   const exportResetBaseline = ref(false)
+  const exportRecheckImages = ref(false)
   const exportBaselineStatus = ref('unknown')
   const exportHtmlPageSize = ref(1000)
   const exportTranscribeVoice = ref(false)
@@ -791,6 +792,7 @@ export const useChatExport = ({ api, apiBase, contacts, selectedAccount, selecte
     exportFormat.value = 'html'
     exportOutputMode.value = 'zip'
     exportResetBaseline.value = false
+    exportRecheckImages.value = false
     exportBaselineStatus.value = exportFolder.value ? 'auto' : 'unknown'
     exportHtmlPageSize.value = 1000
     exportTranscribeVoice.value = false
@@ -983,7 +985,7 @@ export const useChatExport = ({ api, apiBase, contacts, selectedAccount, selecte
         missing_files: isIncrementalFolderMode.value ? missingFiles : [],
         reset_baseline: isIncrementalFolderMode.value && !!exportResetBaseline.value,
         repair_usernames: requestedRepairUsernames,
-        recheck_media: !!options?.recheckMedia
+        recheck_media: !!options?.recheckMedia || (isIncrementalFolderMode.value && includeMedia && !!exportRecheckImages.value)
       })
 
       exportJob.value = response?.job || null
@@ -1042,6 +1044,7 @@ export const useChatExport = ({ api, apiBase, contacts, selectedAccount, selecte
     exportFormat,
     exportOutputMode,
     exportResetBaseline,
+    exportRecheckImages,
     exportBaselineStatus,
     exportFolderNamePreview,
     isIncrementalFolderMode,

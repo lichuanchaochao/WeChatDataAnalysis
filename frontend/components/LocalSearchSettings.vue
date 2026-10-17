@@ -179,6 +179,13 @@
   </section>
 </template>
 
+<script>
+export const cachedStateByAccount = new Map()
+export function clearCachedLocalSearchState() {
+  cachedStateByAccount.clear()
+}
+</script>
+
 <script setup>
 import { Box, Check, ChevronDown, CircleAlert, CircleCheck, CirclePause, Info, Laptop, LoaderCircle, Microchip, Pause, Play, Search, SlidersHorizontal, X } from '@lucide/vue'
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
@@ -186,9 +193,17 @@ import { storeToRefs } from 'pinia'
 import { useChatAccountsStore } from '~/stores/chatAccounts'
 import UiSelect from './UiSelect.vue'
 const props=defineProps({accountWide:{type:Boolean,default:false}})
-const { selectedAccount: account }=storeToRefs(useChatAccountsStore())
+let account = ref('')
+try {
+  const store = useChatAccountsStore()
+  if (store) account = storeToRefs(store).selectedAccount
+} catch {
+  // Pinia not active in unit tests
+}
 const api=useAiApi(), route=useRoute()
-const state=ref({}), form=reactive({enabled:false,model:null,usernames:[],days:90,start:null,end:null,device:'auto',device_id:0,auto_update:true,read_batch_size:0,remote_endpoint:null,remote_model:null,remote_api_key:null,remote_allow_self_signed:false})
+const initialCached = account.value ? cachedStateByAccount.get(account.value) : null
+const state=ref(initialCached ? { ...initialCached } : {}), form=reactive({enabled:false,model:null,usernames:[],days:90,start:null,end:null,device:'auto',device_id:0,auto_update:true,read_batch_size:0,remote_endpoint:null,remote_model:null,remote_api_key:null,remote_allow_self_signed:false})
+if(initialCached?.config){for(const k of Object.keys(form))if(k in initialCached.config)form[k]=initialCached.config[k]}
 const statusRef=ref(null)
 const advancedOpen=ref(false),busy=ref(false),dialogError=ref(''),error=ref(''),notice=ref(''),now=ref(Date.now()/1000),gpuDevices=ref([])
 const dialog=ref(''),dialogRef=ref(null),scopeSearch=ref(''),scopeDraft=ref([]),chats=ref([]),importId=ref(''),importPath=ref('')
@@ -331,6 +346,7 @@ async function refresh(reset=false,wait=false){
     // 慢轮询响应不能覆盖刚收到的实时进度。
     result.jobs=result.jobs?.map(incoming=>{const live=state.value.jobs?.find(j=>j.id===incoming.id);if(live?.updated>incoming.updated){api.diagnostic?.('response.stale',{task_id:incoming.id,component:'search'});return live}return incoming})
     state.value=gpuStamp===gpuVersion ? result : {...result,gpu:state.value.gpu}
+    if(account.value)cachedStateByAccount.set(account.value, state.value)
     if(needsReset){Object.assign(form,defaults);if(result.config)for(const key of Object.keys(form)) if(key in result.config)form[key]=result.config[key];period.value=form.start!==null?'custom':String(form.days);startDate.value=form.start?new Date(form.start*1000).toLocaleDateString('en-CA'):'';endDate.value=form.end?new Date(form.end*1000).toLocaleDateString('en-CA'):'';needsReset=false}
   } catch(e){error.value=e.message} finally{loading=false;finishRefresh()}
 }
@@ -425,7 +441,10 @@ function subscribe(){
 }
 watch(account,async()=>{
   const current=account.value
-  version++;stopEvents?.();dialog.value='';error.value='';notice.value='';chats.value=[];state.value={};Object.assign(form,defaults)
+  version++;stopEvents?.();dialog.value='';error.value='';notice.value='';chats.value=[]
+  const cached=current ? cachedStateByAccount.get(current) : null
+  state.value=cached ? { ...cached } : {}
+  Object.assign(form,defaults)
   await refresh(true,true)
   if(current===account.value)subscribe()
 })

@@ -901,6 +901,8 @@ function loadDesktopSettings() {
     // Tracks the packaged UI build so we can invalidate Chromium's HTTP cache
     // after upgrades without wiping user data/localStorage.
     lastSeenUiBuildId: "",
+    // Global UI zoom scale factor (default 1.0, allowed range 0.7 - 2.0).
+    zoomFactor: 1.0,
   };
 
   const p = getDesktopSettingsPath();
@@ -953,6 +955,86 @@ function persistDesktopSettings({ throwOnError = false } = {}) {
     }
     return false;
   }
+}
+
+const MIN_ZOOM = 0.7;
+const MAX_ZOOM = 2.0;
+const ZOOM_STEP = 0.1;
+
+function getZoomFactor() {
+  const settings = loadDesktopSettings();
+  const val = Number(settings.zoomFactor);
+  if (Number.isFinite(val) && val >= MIN_ZOOM && val <= MAX_ZOOM) {
+    return Math.round(val * 100) / 100;
+  }
+  return 1.0;
+}
+
+function saveZoomFactor(factor) {
+  const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(factor * 100) / 100));
+  loadDesktopSettings();
+  desktopSettings.zoomFactor = clamped;
+  persistDesktopSettings();
+  return clamped;
+}
+
+function applyZoom(win, factor) {
+  if (!win || win.isDestroyed()) return;
+  const clamped = saveZoomFactor(factor);
+  win.webContents.setZoomFactor(clamped);
+  logMain(`[zoom] applied zoomFactor: ${clamped}`);
+}
+
+function zoomIn(win) {
+  if (!win || win.isDestroyed()) return;
+  const current = win.webContents.getZoomFactor();
+  applyZoom(win, current + ZOOM_STEP);
+}
+
+function zoomOut(win) {
+  if (!win || win.isDestroyed()) return;
+  const current = win.webContents.getZoomFactor();
+  applyZoom(win, current - ZOOM_STEP);
+}
+
+function resetZoom(win) {
+  if (!win || win.isDestroyed()) return;
+  applyZoom(win, 1.0);
+}
+
+function setupWindowZoom(win) {
+  const initial = getZoomFactor();
+  try {
+    win.webContents.setZoomFactor(initial);
+  } catch {}
+
+  win.webContents.on("did-finish-load", () => {
+    try {
+      win.webContents.setZoomFactor(getZoomFactor());
+    } catch {}
+  });
+
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const isCtrlOrCmd = process.platform === "darwin" ? input.meta : input.control;
+    if (!isCtrlOrCmd) return;
+
+    if (input.key === "=" || input.key === "+" || input.code === "NumpadAdd") {
+      event.preventDefault();
+      zoomIn(win);
+    } else if (input.key === "-" || input.key === "_" || input.code === "NumpadSubtract") {
+      event.preventDefault();
+      zoomOut(win);
+    } else if (input.key === "0" || input.code === "Numpad0") {
+      event.preventDefault();
+      resetZoom(win);
+    }
+  });
+
+  win.webContents.on("zoom-changed", (event, direction) => {
+    if (direction === "in") zoomIn(win);
+    else if (direction === "out") zoomOut(win);
+  });
 }
 
 function snapshotOutputDirSettings() {
@@ -2550,6 +2632,7 @@ function createMainWindow() {
 
   setupRendererConsoleLogging(win);
   setupRendererLifecycleLogging(win);
+  setupWindowZoom(win);
 
   return win;
 }
@@ -2839,6 +2922,29 @@ function registerWindowIpc() {
   ipcMain.handle("window:setTitleBarTheme", (event, theme) => {
     const win = getWin(event);
     return setWindowTitleBarTheme(win, theme);
+  });
+
+  ipcMain.handle("app:getZoomFactor", () => getZoomFactor());
+  ipcMain.handle("app:setZoomFactor", (event, factor) => {
+    const win = getWin(event) || mainWindow;
+    if (win && !win.isDestroyed()) applyZoom(win, factor);
+    else saveZoomFactor(factor);
+    return getZoomFactor();
+  });
+  ipcMain.handle("app:zoomIn", (event) => {
+    const win = getWin(event) || mainWindow;
+    if (win && !win.isDestroyed()) zoomIn(win);
+    return getZoomFactor();
+  });
+  ipcMain.handle("app:zoomOut", (event) => {
+    const win = getWin(event) || mainWindow;
+    if (win && !win.isDestroyed()) zoomOut(win);
+    return getZoomFactor();
+  });
+  ipcMain.handle("app:resetZoom", (event) => {
+    const win = getWin(event) || mainWindow;
+    if (win && !win.isDestroyed()) resetZoom(win);
+    return getZoomFactor();
   });
 
   ipcMain.handle("app:getAutoLaunch", () => {

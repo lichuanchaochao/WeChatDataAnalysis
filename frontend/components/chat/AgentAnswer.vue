@@ -1,7 +1,7 @@
 <template>
   <div ref="answer" class="agent-answer">
     <div class="agent-markdown" v-html="rendered" @error.capture="hideMissingAvatar" @click="onReference" @pointerover="hoverReference" @pointerout="leaveReference" @focusin="hoverReference" @focusout="leaveReference" />
-    <div v-if="selected" :key="selected.source" :id="previewId" ref="preview" popover="manual" class="agent-citation-preview" role="dialog" aria-label="消息来源预览" @pointerenter="cancelClose" @pointerleave="leaveReference" @keydown.esc.stop.prevent="closePreview(true)">
+    <div v-if="selected" :key="selected.source" :id="previewId" ref="preview" popover="manual" class="agent-citation-preview" role="dialog" aria-label="消息来源预览" @pointerenter="cancelClose" @pointerleave="leavePreview" @keydown.esc.stop.prevent="closePreview(true)">
       <header><AgentAvatar :path="selected.sender_avatar_path" :name="selected.sender" /><div><strong>{{ selected.sender }}</strong><small>{{ selected.name || selected.username }} · {{ new Date(selected.time * 1000).toLocaleString() }}</small></div><button type="button" aria-label="关闭来源预览" @click="closePreview(true)"><X :size="16" :stroke-width="1.8" aria-hidden="true" /></button></header>
       <p class="agent-citation-text">{{ selected.text }}</p><small v-if="selected.excerpt">此处为原文节选，可定位查看完整消息。</small>
       <p v-if="locateError" class="agent-citation-error" role="alert">{{ locateError }}</p>
@@ -85,13 +85,30 @@ const openPersonProfile = button => {
     avatar: referenceUrl(person.avatar_path, apiBase)
   })
 }
+const leavePreview = event => {
+  if (!pinned && event.relatedTarget !== trigger && !trigger?.contains(event.relatedTarget)) {
+    cancelClose()
+    closeTimer = setTimeout(() => closePreview(), 80)
+  }
+}
 const leaveReference = event => {
   const person = event.target.closest('button[data-person]')
   if (person) {
     if (!person.contains(event.relatedTarget)) profileState?.onMentionMouseLeave?.()
     return
   }
-  if (!pinned && !preview.value?.contains(event.relatedTarget)) { cancelClose(); closeTimer = setTimeout(() => closePreview(), 180) }
+  const sourceButton = event.target.closest('button[data-source]')
+  if (sourceButton) {
+    if (!pinned && !preview.value?.contains(event.relatedTarget)) {
+      cancelClose()
+      closeTimer = setTimeout(() => closePreview(), 80)
+    }
+    return
+  }
+  if (!pinned && !preview.value?.contains(event.relatedTarget) && event.relatedTarget !== trigger) {
+    cancelClose()
+    closeTimer = setTimeout(() => closePreview(), 80)
+  }
 }
 const hoverReference = event => {
   const person = event.target.closest('button[data-person]')
@@ -99,7 +116,16 @@ const hoverReference = event => {
     if (!person.contains(event.relatedTarget)) openPersonProfile(person)
     return
   }
-  cancelClose(); if (!pinned && event.target.closest('button[data-source]') !== trigger) void onCitation(event, false)
+  const sourceButton = event.target.closest('button[data-source]')
+  if (sourceButton) {
+    cancelClose()
+    if (!pinned && sourceButton !== trigger) void onCitation(event, false)
+  } else {
+    if (!pinned && selected.value && !preview.value?.contains(event.target)) {
+      cancelClose()
+      closeTimer = setTimeout(() => closePreview(), 80)
+    }
+  }
 }
 const onReference = event => {
   const image = event.target.closest('button[data-image]')

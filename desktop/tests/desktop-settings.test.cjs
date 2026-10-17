@@ -20,6 +20,12 @@ test("parseDesktopSettingsText normalizes non-object JSON to an empty settings o
   assert.deepEqual(parseDesktopSettingsText("[]"), {});
 });
 
+test("parseDesktopSettingsText preserves zoomFactor when specified", () => {
+  assert.deepEqual(parseDesktopSettingsText('{"zoomFactor": 1.2}'), {
+    zoomFactor: 1.2,
+  });
+});
+
 test("writeDesktopSettingsFileAtomic replaces settings without leaving a temp file", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "wda-settings-"));
   const settingsPath = path.join(root, "desktop-settings.json");

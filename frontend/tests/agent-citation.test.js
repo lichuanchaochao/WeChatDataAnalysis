@@ -61,6 +61,23 @@ describe('引用预览交互', () => {
     await flushPromises()
     expect(view.find('.agent-citation-preview').exists()).toBe(false)
   })
+  it('悬停引用显示卡片，移出到普通文字后迅速自动消失', async () => {
+    vi.useFakeTimers()
+    try {
+      const view = mountAnswer()
+      const button = view.find('.agent-ref')
+      await button.trigger('pointerover'); await flushPromises()
+      expect(view.find('.agent-citation-preview').exists()).toBe(true)
+
+      await button.trigger('pointerout')
+      await view.find('.agent-markdown').trigger('pointerover')
+      vi.advanceTimersByTime(100)
+      await flushPromises()
+      expect(view.find('.agent-citation-preview').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('紧贴引用打开，预读一次，Esc 关闭并将焦点还给原编号', async () => {
     const prepare = vi.fn(), view = mountAnswer({prepare})
     const button = view.find('.agent-ref')

@@ -1,12 +1,13 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
-import LocalSearchSettings from '../components/LocalSearchSettings.vue'
+import LocalSearchSettings, { clearCachedLocalSearchState } from '../components/LocalSearchSettings.vue'
 
 const account=ref('test-account'),request=vi.fn()
 vi.mock('~/stores/chatAccounts',()=>({useChatAccountsStore:()=>({selectedAccount:account})}))
 let wrapper,config,models,jobs,gpu,onEvent,indexStats,conversations,messageTotal
 beforeEach(()=>{
+  clearCachedLocalSearchState?.()
   account.value='test-account'
   models=[{id:'bge-small-zh',name:'BGE Small 中文',description:'适合中文聊天',recommended:true,repo:'Xenova/bge-small-zh-v1.5',revision:'a'.repeat(40),license:'MIT',downloaded:false,size:95000000}]
   jobs=[]

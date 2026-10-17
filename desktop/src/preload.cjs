@@ -80,6 +80,12 @@ contextBridge.exposeInMainWorld("wechatDesktop", {
   isDebugEnabled: () => ipcRenderer.invoke("app:isDebugEnabled"),
   logDebug: (scope, message, details = {}) => sendDebugLog(scope, message, details),
 
+  getZoomFactor: () => ipcRenderer.invoke("app:getZoomFactor"),
+  setZoomFactor: (factor) => ipcRenderer.invoke("app:setZoomFactor", Number(factor)),
+  zoomIn: () => ipcRenderer.invoke("app:zoomIn"),
+  zoomOut: () => ipcRenderer.invoke("app:zoomOut"),
+  resetZoom: () => ipcRenderer.invoke("app:resetZoom"),
+
   getAutoLaunch: () => ipcRenderer.invoke("app:getAutoLaunch"),
   setAutoLaunch: (enabled) => ipcRenderer.invoke("app:setAutoLaunch", !!enabled),
 
