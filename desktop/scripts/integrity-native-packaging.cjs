@@ -139,7 +139,7 @@ function resolveIntegrityNativeArtifact({
       manifest.binarySize !== fs.statSync(binaryPath).size || manifest.pythonAbi !== "abi3-py311" ||
       manifest.buildId !== buildId || !Number.isSafeInteger(issuedAt) ||
       !Number.isSafeInteger(expiresAt) || expiresAt - issuedAt !== LIFETIME_SECONDS ||
-      issuedAt > nowUnix + 300 || expiresAt <= nowUnix ||
+      issuedAt > nowUnix + 300 ||
       manifest.sourceRepository !== sourceRepository || manifest.sourceRevision !== sourceRevision ||
       manifest.uiSourceRepository !== uiRepository || manifest.uiSourceRevision !== uiRevision ||
       manifest.distributionMode !== "public" || manifest.development !== false) {

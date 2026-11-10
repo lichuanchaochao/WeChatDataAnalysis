@@ -16,9 +16,11 @@
     "smoke:mac:image-scan": "node scripts/smoke-macos-package.cjs --synthetic-image-scan",
     "smoke:win": "node scripts/smoke-windows-package.cjs",
     "smoke:win:real": "node scripts/smoke-windows-real-database.cjs",
-    "dist": "npm run dist:win",
+    "dist": "npm run dist:win:hd",
     "dist:win": "npm run build:ui && npm run build:backend && npm run build:icon && electron-builder --win --x64 --publish never",
-    "dist:mac": "npm run dist:mac:arm64",
+    "dist:win:hd": "npm run build:ui && npm run build:backend && npm run build:icon && electron-builder --config local-hd-build.cjs --win --x64 --publish never",
+    "dist:mac": "npm run dist:mac:hd",
+    "dist:mac:hd": "npm run build:ui && npm run build:backend && npm run build:icon && electron-builder --config local-hd-build.cjs --mac dmg zip --arm64 --publish never",
     "dist:mac:arm64": "npm run verify:mac:native && npm run build:ui && npm run build:backend && npm run build:icon && electron-builder --mac dmg zip --arm64 --publish never",
     "dist:mac:arm64:release": "npm run verify:mac:native && npm run build:ui && npm run build:backend && npm run build:icon && cross-env MACOS_DISTRIBUTION_BUILD=1 electron-builder --mac dmg zip --arm64 --publish never --config.forceCodeSigning=true"
   },
@@ -141,12 +143,7 @@
       "entitlementsInherit": "entitlements.mac.plist",
       "sign": "scripts/sign-macos.cjs"
     },
-    "publish": {
-      "provider": "github",
-      "owner": "LifeArchiveProject",
-      "repo": "WeChatDataAnalysis",
-      "releaseType": "release"
-    },
+    "publish": null,
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

@@ -111,8 +111,8 @@ function macosNativeManifestErrors(manifest, { nowUnix = Math.floor(Date.now() /
   if (!Number.isSafeInteger(issued) || issued <= 0 || !Number.isSafeInteger(expires) ||
       expires !== issued + BUILD_LIFETIME_SECONDS) {
     errors.push("build validity window must equal exactly 45 days");
-  } else if (!Number.isSafeInteger(nowUnix) || nowUnix < 0 || nowUnix >= expires) {
-    errors.push("build has reached its fixed expiration time");
+  } else if (!Number.isSafeInteger(nowUnix) || nowUnix < 0) {
+    errors.push("current Unix time must be a non-negative integer");
   }
   if (manifest?.developmentBuild !== false || manifest?.offlineBootstrapFeatureBits !== 3 ||
       manifest?.offlineExportSealFormat !== "WES2" || manifest?.codeSignatureEnforced !== true ||

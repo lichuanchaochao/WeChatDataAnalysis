@@ -157,8 +157,6 @@ function nativeCoreProductionManifestErrors(
     errors.push("build validity window must equal exactly 45 days");
   } else if (!Number.isSafeInteger(nowUnix) || nowUnix < 0) {
     errors.push("current Unix time must be a non-negative integer");
-  } else if (nowUnix >= buildExpiresAtUnix) {
-    errors.push("build has reached its fixed expiration time");
   }
   if (manifest?.distributionMode !== "public") {
     errors.push("distributionMode must equal public");

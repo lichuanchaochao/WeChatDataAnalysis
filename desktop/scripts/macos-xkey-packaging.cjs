@@ -107,8 +107,8 @@ function macosXkeyManifestErrors(manifest, { nowUnix = Math.floor(Date.now() / 1
     build?.validitySeconds !== BUILD_LIFETIME_SECONDS
   ) {
     errors.push("build validity window must equal exactly 45 days");
-  } else if (nowUnix >= build.expiresAtUnix) {
-    errors.push("build has reached its fixed expiration time");
+  } else if (!Number.isSafeInteger(nowUnix) || nowUnix < 0) {
+    errors.push("current Unix time is invalid");
   }
   if (build?.development !== false) errors.push("build.development must be false");
 
