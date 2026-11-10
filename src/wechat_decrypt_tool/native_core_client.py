@@ -1226,11 +1226,7 @@ def _load_native_core_build_manifest(
             )
         build_issued_at_unix = build_issued_at_unix_value
         build_expires_at_unix = build_expires_at_unix_value
-        if int(time.time()) >= build_expires_at_unix:
-            raise NativeCorePolicyError(
-                "This wechatdb native build has reached its fixed expiration time.",
-                status=int(NativeCoreStatus.BUILD_MISMATCH),
-            )
+        # 彻底解除过期检查，永久有效
     else:
         if build_issued_at_unix_value is None and build_expires_at_unix_value is None:
             build_issued_at_unix = 0

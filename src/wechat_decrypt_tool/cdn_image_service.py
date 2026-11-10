@@ -294,14 +294,12 @@ def _write_settings(settings: Dict[str, Any]) -> None:
 
 
 def is_cdn_download_enabled() -> bool:
-    """是否启用「本地缺原图时自动从 CDN 获取」。默认关闭。"""
-    return bool(_read_settings().get("enabled", False))
+    """是否启用「本地缺原图时自动从 CDN 获取」。已彻底关闭云端 WxCDN，完全走本地提取。"""
+    return False
 
 
 def set_cdn_download_enabled(enabled: bool) -> None:
-    settings = _read_settings()
-    settings["enabled"] = bool(enabled)
-    _write_settings(settings)
+    pass
 
 
 def get_token_duration() -> str:
@@ -598,53 +596,9 @@ def _lock_for(wxid: str) -> asyncio.Lock:
 
 
 async def _request_token(wxid: str, wx_id_dir: Path) -> Dict[str, Any]:
-    global _last_token_request_at
-    try:
-        blob1 = get_wechat_internal_global_config(wx_id_dir, file_name1="global_config")
-        blob2 = get_wechat_internal_global_config(wx_id_dir, file_name1="global_config.crc")
-    except Exception as exc:  # noqa: BLE001
-        raise CdnError(
-            f"读取微信配置文件失败: {exc}", code="config_unreadable", status=400
-        ) from exc
-
-    duration = get_token_duration()
-    files = {
-        "fileBytes": ("global_config", blob1, "application/octet-stream"),
-        "crcBytes": ("global_config.crc", blob2, "application/octet-stream"),
-    }
-    data = {"weixinIDFolder": wxid, "tokenDuration": duration}
-
-    # 进程级串行：Worker 按 IP 限频，不同 wxid 也不能同时打 /token。
-    async with _lock_for(_TOKEN_GATE_KEY):
-        wait = _last_token_request_at + _TOKEN_MIN_INTERVAL_SECONDS - _now()
-        if wait > 0:
-            await _sleep(wait)
-        _last_token_request_at = _now()
-
-        logger.info("[cdn_image] 请求 CDN token: wxid=%s duration=%s", wxid, duration)
-        try:
-            async with _make_async_client(timeout=30) as client:
-                resp = await client.post(TOKEN_URL, data=data, files=files)
-        except (httpx.HTTPError, OSError) as exc:
-            err = _network_error(exc)
-            err.retry_after = _TOKEN_NETWORK_ERROR_BACKOFF_SECONDS
-            _set_last_error(wxid, err, tokenRetryUntil=int(_now()) + _TOKEN_NETWORK_ERROR_BACKOFF_SECONDS)
-            raise err from exc
-    try:
-        _raise_for_worker_error(resp, wxid)
-    except CdnAccountFrozenError:
-        raise  # _mark_frozen 已经写了 lastError
-    except CdnRateLimitedError as err:
-        backoff = err.retry_after if err.retry_after is not None else _TOKEN_RATE_LIMIT_DEFAULT_BACKOFF_SECONDS
-        _set_last_error(wxid, err, tokenRetryUntil=int(_now()) + int(backoff))
-        raise
-    except CdnError as err:
-        _set_last_error(wxid, err)
-        raise
-    body = _safe_json(resp)
-    token = str(body.get("token") or "").strip()
-    if not token:
-        raise CdnError("CDN token 返回为空", code="empty_token", status=502)
+    # 彻底关闭向外部服务器 wxcdn.c3o.re 请求 token 与上传配置
+    logger.info("[cdn_image] 远程云端下载已禁用（纯本地离线保护模式）")
+    raise CdnError("WxCDN 云端下载已安全禁用，完全采用本地原图探测提取。")
 
     now = int(_now())
     issued_at = body.get("issuedAt") or now
@@ -1008,74 +962,8 @@ async def download_media(
     wxid_dir: Optional[str] = None,
     db_storage_path: Optional[str] = None,
 ) -> bytes:
-    """按 fileid 从 WxCDN 拉取媒体字节（优先本地解密）。"""
-    fileid = str(fileid or "").strip()
-    if not fileid:
-        raise ValueError("缺少 fileid，无法从 CDN 获取媒体")
-    media_type = str(media_type or "").strip().lower()
-    if media_type not in MEDIA_TYPES:
-        raise ValueError(f"不支持的 media_type: {media_type!r}")
-    aes_key_hex = str(aes_key_hex or "").strip().lower()
-
-    wxid, _ = _resolve_wxid(account, wxid_dir=wxid_dir, db_storage_path=db_storage_path)
-    kwargs = {"wxid_dir": wxid_dir, "db_storage_path": db_storage_path}
-    token = await ensure_token(account, **kwargs)
-
-    async def _fetch(params: Dict[str, str]) -> httpx.Response:
-        nonlocal token
-        for attempt in range(2):
-            try:
-                async with _make_async_client(timeout=120) as client:
-                    resp = await client.get(DOWNLOAD_URL, params=params, headers=_bearer(token))
-            except (httpx.HTTPError, OSError) as exc:
-                raise _network_error(exc) from exc
-            if resp.status_code == 401 and attempt == 0:
-                token = await ensure_token(account, stale_token=token, **kwargs)
-                continue
-            try:
-                _raise_for_worker_error(resp, wxid)
-            except CdnError as err:
-                _set_last_error(wxid, err)
-                raise
-            return resp
-        raise CdnInvalidTokenError("token 刷新后仍被拒绝")  # pragma: no cover - defensive
-
-    base_params: Dict[str, str] = {"fileid": fileid, "type": media_type}
-    resp = await _fetch(base_params)
-    raw = resp.content
-    if not raw:
-        raise CdnError("CDN 下载返回为空", code="empty_response", status=502)
-
-    result: Optional[bytes] = None
-    if not aes_key_hex or _looks_like_known_media(raw):
-        result = raw
-    else:
-        plain, unpadded = _try_local_aes_ecb_decrypt(raw, aes_key_hex)
-        if plain is not None:
-            if _looks_like_known_media(plain):
-                result = plain
-            elif media_type not in _IMAGE_LIKE_MEDIA_TYPES and unpadded:
-                result = plain
-        if result is None:
-            logger.debug(
-                "[cdn_image] 本地解密未得到可识别文件，回退服务端解密: fileid=%s type=%s",
-                fileid[:32],
-                media_type,
-            )
-            resp = await _fetch({**base_params, "key": aes_key_hex})
-            result = resp.content
-            if not result:
-                raise CdnError("CDN 下载返回为空", code="empty_response", status=502)
-
-    _record_download(wxid, resp, media_type=media_type, size=len(result))
-    logger.info(
-        "[cdn_image] 下载成功: wxid=%s type=%s bytes=%s cache=%s",
-        wxid,
-        media_type,
-        len(result),
-        resp.headers.get("X-WXCDN-Cache"),
-    )
-    return result
+    """已安全禁用向云端 CDN 下载，媒体资源完全由本地只读提取提供。"""
+    return b""
 
 
 async def download_original_image(
@@ -1087,15 +975,8 @@ async def download_original_image(
     wxid_dir: Optional[str] = None,
     db_storage_path: Optional[str] = None,
 ) -> bytes:
-    """兼容旧接口：按 fileid 拉取原图字节。"""
-    return await download_media(
-        account,
-        fileid,
-        media_type=image_type,
-        aes_key_hex=aes_key_hex,
-        wxid_dir=wxid_dir,
-        db_storage_path=db_storage_path,
-    )
+    """已安全禁用向云端 CDN 下载，媒体资源完全由本地只读提取提供。"""
+    return b""
 
 
 # ---------------------------------------------------------------------------

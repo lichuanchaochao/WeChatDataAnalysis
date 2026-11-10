@@ -2776,10 +2776,8 @@ async def get_chat_image(
         )
 
     async def fetch_cdn_original() -> tuple[bytes, str] | None:
-        if not server_id:
-            return None
-        if not fetch_remote and not cdn_image_service.is_cdn_download_enabled():
-            return None
+        # 已彻底关闭云端 WxCDN 下载，媒体资源完全走本地高清提取，0 外部服务器依赖
+        return None
         try:
             cdn_info = await asyncio.to_thread(
                 _lookup_image_cdn_download_info,

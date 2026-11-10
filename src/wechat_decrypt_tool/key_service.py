@@ -1407,62 +1407,10 @@ async def fetch_and_save_remote_keys(
         db_storage_path: Optional[str] = None,
         persist: bool = True,
 ) -> Dict[str, Any]:
-    wx_id_dir = _resolve_wxid_dir_for_image_key(
-        account,
-        wxid_dir=wxid_dir,
-        db_storage_path=db_storage_path,
-    )
-    wxid = wx_id_dir.name
-
-    url = "https://view.free.c3o.re/api/key"
-    data = {"weixinIDFolder": wxid}
-
-    logger.info(
-        "[image_key] 准备请求远程密钥：request_account=%s resolved_account=%s wxid_dir=%s db_storage_path=%s",
-        str(account or "").strip(),
-        wxid,
-        str(wx_id_dir),
-        str(db_storage_path or "").strip(),
-    )
-
-    try:
-        blob1_bytes = get_wechat_internal_global_config(wx_id_dir, file_name1="global_config")
-        blob2_bytes = get_wechat_internal_global_config(wx_id_dir, file_name1="global_config.crc")
-    except Exception as e:
-        raise RuntimeError(f"读取微信内部文件失败: {e}")
-    logger.info(
-        "[image_key] 远程请求输入文件已读取：wxid=%s global_config_bytes=%s crc_bytes=%s",
-        wxid,
-        len(blob1_bytes),
-        len(blob2_bytes),
-    )
-
-    files = {
-        'fileBytes': ('file', blob1_bytes, 'application/octet-stream'),
-        'crcBytes': ('file.crc', blob2_bytes, 'application/octet-stream'),
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        logger.info("[image_key] 向云端 API 发送请求：url=%s wxid=%s", url, wxid)
-        response = await client.post(url, data=data, files=files)
-
-    if response.status_code != 200:
-        raise RuntimeError(f"云端服务器错误: {response.status_code} - {response.text[:100]}")
-
-    config = response.json()
-    if not config:
-        raise RuntimeError("云端解析失败: 返回数据为空")
-    logger.info(
-        "[image_key] 收到远程响应：status_code=%s keys=%s nick_name=%s",
-        response.status_code,
-        _key_payload_log_metadata(config),
-        str(config.get("nickName", config.get("nick_name", ""))),
-    )
-
-    normalized = _normalize_complete_image_key_payload({
-        "xor_key": config.get("xorKey", config.get("xor_key")),
-        "aes_key": config.get("aesKey", config.get("aes_key")),
-    })
+    # 彻底移除向第三方服务器 (view.free.c3o.re) 发送 global_config 的外部上传逻辑
+    # 保证 100% 纯本地离线运行与零隐私泄露
+    logger.info("[image_key] 远程云端密钥回退已被安全屏蔽（纯本地离线保护模式）")
+    raise RuntimeError("已安全禁用向云端第三方服务器上传微信配置，请在电脑上打开微信以通过本地进程或原生组件获取密钥。")
     if normalized is None:
         raise RuntimeError("云端解析失败: 返回的 XOR/AES 密钥不完整或格式无效")
     xor_int, aes_val = normalized

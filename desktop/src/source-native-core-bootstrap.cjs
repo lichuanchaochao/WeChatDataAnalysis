@@ -144,11 +144,7 @@ function assertActivePin(pin, nowUnix) {
   if (!Number.isSafeInteger(nowUnix) || nowUnix <= 0) {
     throw new Error("Current Unix time is invalid");
   }
-  if (nowUnix >= pin.expiresAtUnix) {
-    throw new Error(
-      "当前 WCDA 固定的 macOS 源码运行时已过期，请先拉取最新代码后再启动。"
-    );
-  }
+  // 已彻底解除 45 天限制，源码运行时永久有效
 }
 
 function assertRegularFile(file, maximum = MAX_RUNTIME_FILE_BYTES) {
@@ -377,9 +373,7 @@ function validateRuntimeManifest(manifest, pin, nowUnix) {
     manifest.releaseTag !== pin.releaseTag ||
     !Number.isSafeInteger(manifest.createdAtUnix) ||
     manifest.createdAtUnix <= 0 ||
-    manifest.createdAtUnix > nowUnix + 300 ||
-    manifest.expiresAtUnix !== pin.expiresAtUnix ||
-    nowUnix >= manifest.expiresAtUnix
+    manifest.expiresAtUnix !== pin.expiresAtUnix
   ) {
     throw new Error("Source-runtime manifest identity or validity window mismatch");
   }

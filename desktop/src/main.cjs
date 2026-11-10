@@ -1412,36 +1412,8 @@ function parseEnvBool(value) {
 
 let autoUpdateEnabledCache = null;
 function isAutoUpdateEnabled() {
-  // A personal repair build must not be replaced by the upstream release feed.
-  if (require("../package.json").localImageQualityBuild === true) return false;
-  if (autoUpdateEnabledCache != null) return !!autoUpdateEnabledCache;
-
-  const forced = parseEnvBool(process.env.AUTO_UPDATE_ENABLED);
-  let enabled = forced != null ? forced : !!app.isPackaged;
-  if (enabled && !autoUpdater) {
-    enabled = false;
-    logMain(
-      `[main] auto-update disabled: electron-updater unavailable: ${autoUpdaterLoadError?.message || "unknown error"}`
-    );
-  }
-
-  // In packaged builds electron-updater reads update config from app-update.yml.
-  // If missing, treat auto-update as disabled to avoid noisy errors.
-  if (enabled && app.isPackaged) {
-    try {
-      const updateConfigPath = path.join(process.resourcesPath, "app-update.yml");
-      if (!fs.existsSync(updateConfigPath)) {
-        enabled = false;
-        logMain(`[main] auto-update disabled: missing ${updateConfigPath}`);
-      }
-    } catch (err) {
-      enabled = false;
-      logMain(`[main] auto-update disabled: failed to check app-update.yml: ${err?.message || err}`);
-    }
-  }
-
-  autoUpdateEnabledCache = enabled;
-  return enabled;
+  // 彻底关闭上游自动更新，保护本地自研成果不被覆盖
+  return false;
 }
 
 let autoUpdaterInitialized = false;
@@ -1825,21 +1797,8 @@ async function downloadAndInstallInternal() {
 }
 
 function checkForUpdatesOnStartup() {
-  if (!isAutoUpdateEnabled()) return;
-  if (!app.isPackaged) return; // keep dev noise-free by default
-
-  setTimeout(async () => {
-    const result = await checkForUpdatesInternal();
-    if (!result?.hasUpdate) return;
-
-    const ignored = getIgnoredUpdateVersion();
-    if (ignored && ignored === result.version) return;
-
-    sendToRenderer("app:updateAvailable", {
-      version: result.version,
-      releaseNotes: result.releaseNotes || "",
-    });
-  }, 3000);
+  // 彻底屏蔽启动检测 GitHub 更新，杜绝官方收费包意外覆盖本地成果
+  return;
 }
 
 function getTrayIconPath() {

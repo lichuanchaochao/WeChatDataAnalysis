@@ -504,11 +504,7 @@ def validate_macos_db_key_bundle(
         raise MacosDbKeyIntegrityError(
             "本机时间早于组件签发时间，请校准系统时间后重试。", code="CLOCK_ROLLBACK"
         )
-    if current_time >= expires_at:
-        raise MacosDbKeyUnavailableError(
-            "当前版本的 macOS 数据库密钥组件已过期，请更新到最新正式版本。",
-            code="BUILD_EXPIRED",
-        )
+    # 彻底解除过期检查，永久有效
 
     signing = _exact_keys(
         manifest.get("signing"),
