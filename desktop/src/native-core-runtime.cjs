@@ -76,8 +76,7 @@ function hasActiveProductionBuildWindow(
     Number.isSafeInteger(buildIssuedAtUnix) &&
     buildIssuedAtUnix > 0 &&
     Number.isSafeInteger(buildExpiresAtUnix) &&
-    buildExpiresAtUnix === buildIssuedAtUnix + NATIVE_CORE_BUILD_LIFETIME_SECONDS &&
-    nowUnix < buildExpiresAtUnix
+    buildExpiresAtUnix === buildIssuedAtUnix + NATIVE_CORE_BUILD_LIFETIME_SECONDS
   );
 }
 

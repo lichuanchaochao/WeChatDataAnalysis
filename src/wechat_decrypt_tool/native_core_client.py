@@ -1604,6 +1604,13 @@ def _native_core_entrypoint_directory() -> Path:
                 raise NativeCoreComponentMissingError(
                     f"Configured source native-core directory is invalid: {configured}"
                 ) from exc
+        if sys.platform == "darwin":
+            mac_local = Path(__file__).resolve().parent / "native" / "macos" / "native-core"
+            if (mac_local / "libwechatdb_client.dylib").is_file():
+                return mac_local
+            mac_cache = Path.home() / "Library" / "Caches" / "WeChatDataAnalysis" / "source-native-core" / "macos-source-runtime-20260809-71122b5b-8e355001-6b3f55102cee" / "native-core"
+            if (mac_cache / "libwechatdb_client.dylib").is_file():
+                return mac_cache
     return Path(__file__).resolve().parent / "native"
 
 

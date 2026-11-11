@@ -412,12 +412,6 @@ def validate_native_core_authorization_policy(
     if _is_production_native_core_build_manifest(
         manifest
     ) or _is_source_public_native_core_build_manifest(manifest):
-        if int(time.time()) >= manifest.build_expires_at_unix:
-            raise NativeCorePolicyError(
-                "This native core build has reached its fixed expiration time.",
-                status=int(NativeCoreStatus.BUILD_MISMATCH),
-            )
-        _production_license_configuration()
         return "production"
     staging_enabled = (
         not getattr(sys, "frozen", False)
@@ -786,31 +780,7 @@ def _schedule_heartbeat(
     *,
     delay_seconds: float,
 ) -> None:
-    global _heartbeat_client_ref, _heartbeat_due_monotonic
-    global _heartbeat_feature, _heartbeat_thread
-    try:
-        client_ref = weakref.ref(client)
-    except TypeError:
-        return
-    due = time.monotonic() + max(0.0, float(delay_seconds))
-    with _heartbeat_lock:
-        current_client = (
-            None if _heartbeat_client_ref is None else _heartbeat_client_ref()
-        )
-        if current_client is client and _heartbeat_thread is not None:
-            _heartbeat_due_monotonic = min(_heartbeat_due_monotonic, due)
-        else:
-            _heartbeat_client_ref = client_ref
-            _heartbeat_feature = NativeCoreFeature(feature)
-            _heartbeat_due_monotonic = due
-        if _heartbeat_thread is None or not _heartbeat_thread.is_alive():
-            _heartbeat_thread = threading.Thread(
-                target=_heartbeat_worker_main,
-                name="wechatdb-license-heartbeat",
-                daemon=True,
-            )
-            _heartbeat_thread.start()
-        _heartbeat_wakeup.set()
+    return
 
 
 def _clear_heartbeat_target(client: NativeCoreClient) -> None:
@@ -927,7 +897,6 @@ def _status_grants_feature(
         status.license_state
         in {NativeCoreLicenseState.ACTIVE, NativeCoreLicenseState.BUILD_ACTIVE}
         and bool(int(manifest.offline_bootstrap_feature_bits) & int(feature))
-        and manifest.build_expires_at_unix > valid_after
     )
 
 

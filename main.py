@@ -65,6 +65,27 @@ def main():
     repo_root = Path(__file__).resolve().parent
     enable_reload = os.environ.get("WECHAT_TOOL_RELOAD", "0") == "1"
 
+    if os.environ.get("WECHAT_TOOL_NO_BROWSER", "0") != "1":
+        import threading
+        import time
+        import urllib.request
+        import webbrowser
+
+        def _open_browser():
+            health_url = f"http://{access_host}:{port}/api/health"
+            ui_url = f"http://{access_host}:{port}/"
+            for _ in range(60):
+                time.sleep(0.25)
+                try:
+                    with urllib.request.urlopen(health_url, timeout=1) as resp:
+                        if resp.status == 200:
+                            webbrowser.open(ui_url)
+                            break
+                except Exception:
+                    pass
+
+        threading.Thread(target=_open_browser, name="browser-launcher", daemon=True).start()
+
     # 启动API服务
     uvicorn.run(
         "wechat_decrypt_tool.api:app",

@@ -91,6 +91,8 @@ pnpm-lock.yaml
 /src/wechat_decrypt_tool/native/wechatdb_broker
 /src/wechat_decrypt_tool/native/wechatdb_native_build.json
 /src/wechat_decrypt_tool/native/macos/db-key/
+/src/wechat_decrypt_tool/native/macos/native-core/
+/src/wechat_decrypt_tool/native/macos/integrity/
 
 # Retired standalone WeChat ASR artifacts. The private implementation is now
 # embedded in the signed native-core client/broker artifact set.
