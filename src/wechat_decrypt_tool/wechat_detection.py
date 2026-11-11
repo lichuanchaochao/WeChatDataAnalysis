@@ -54,6 +54,46 @@ SYSTEM_SCAN_SKIP_NAMES = {
     "windows.old(1)",
 }
 
+_NON_ACCOUNT_DIR_NAMES = frozenset({
+    "all users",
+    "all_users",
+    "applet",
+    "backup",
+    "cache",
+    "config",
+    "keyvalue",
+    "log",
+    "logs",
+    "login",
+    "temp",
+    "tmp",
+    "wmpf",
+})
+
+_NON_ACCOUNT_PARENT_NAMES = frozenset({
+    "all_users",
+    "all users",
+    "backup",
+    "keyvalue",
+    "login",
+})
+
+_WECHAT_TOPLEVEL_DB_PATTERN = re.compile(
+    r"^(?:"
+    r"biz|chat_room|contact|emoticon|favorite|ftscontact|ftsfavorite|"
+    r"fts_message|ftsmsg\d*|hardlink|head_image|key_info|mediamsg\d*|"
+    r"message(?:_\d+)?|micromsg|msg\d*|openim|session|sns"
+    r")\.db$",
+    re.IGNORECASE,
+)
+
+_IGNORED_SCAN_DIR_NAMES = frozenset({
+    "__pycache__",
+    "dist",
+    "node_modules",
+    "output",
+})
+
 
 def get_wx_db(msg_dir: str = None,
               db_types: Union[List[str], str] = None,
@@ -370,14 +410,37 @@ def _is_macos_version_data_dir_name(name: str) -> bool:
     return bool(re.fullmatch(r"\d+(?:\.\d+)+(?:b\d+(?:\.\d+)*)?", str(name or "").strip()))
 
 
+def _is_macos_wechat_container_path(path: Path) -> bool:
+    try:
+        return any(part.casefold() == "com.tencent.xinwechat" for part in path.parts)
+    except OSError:
+        return False
+
+
+def _is_ignored_scan_dir(path: Path) -> bool:
+    try:
+        name_cf = path.name.casefold()
+        if not name_cf or name_cf.startswith(".") or name_cf in _IGNORED_SCAN_DIR_NAMES:
+            return True
+        if (path / "src" / "wechat_decrypt_tool").is_dir():
+            return True
+    except OSError:
+        return False
+    return False
+
+
 def _safe_iter_subdirs(directory: str) -> List[tuple[str, str]]:
     items: List[tuple[str, str]] = []
     try:
         with os.scandir(directory) as entries:
             for entry in entries:
                 try:
-                    if entry.is_dir():
-                        items.append((entry.name, entry.path))
+                    if not entry.is_dir():
+                        continue
+                    name = entry.name
+                    if not name or name.startswith(".") or name.casefold() in _IGNORED_SCAN_DIR_NAMES:
+                        continue
+                    items.append((name, entry.path))
                 except OSError:
                     continue
     except (PermissionError, OSError):
@@ -394,12 +457,18 @@ def _append_detected_dir(detected_dirs: List[str], candidate: str) -> None:
 
 
 def _contains_wechat_accounts_within(path: Path, *, depth: int) -> bool:
+    if _is_ignored_scan_dir(path):
+        return False
     if _contains_wechat_account_dirs(path):
         return True
     if depth <= 0:
         return False
     try:
-        children = (child for child in path.iterdir() if child.is_dir())
+        children = (
+            child
+            for child in path.iterdir()
+            if child.is_dir() and not _is_ignored_scan_dir(child)
+        )
         return any(_contains_wechat_accounts_within(child, depth=depth - 1) for child in children)
     except OSError:
         return False
@@ -421,13 +490,10 @@ def _build_auto_detect_scan_paths() -> List[str]:
         scan_paths.append(normalized)
 
     home_dir = str(Path.home())
-    add(home_dir)
-    add(os.path.join(home_dir, "Documents"))
-    add(os.path.join(home_dir, "Desktop"))
-    add(os.path.join(home_dir, "Downloads"))
 
     if sys.platform == "darwin":
         container_root = Path.home() / "Library" / "Containers" / "com.tencent.xinWeChat" / "Data"
+        add(str(container_root / "Documents" / "xwechat_files"))
         app_support = container_root / "Library" / "Application Support" / "com.tencent.xinWeChat"
         add(str(app_support))
         try:
@@ -441,8 +507,16 @@ def _build_auto_detect_scan_paths() -> List[str]:
         for item in version_dirs:
             if re.match(r"^\d+(?:\.\d+)+(?:b\d+(?:\.\d+)*)?$", item.name):
                 add(str(item))
-        add(str(container_root / "Documents" / "xwechat_files"))
+        add(os.path.join(home_dir, "Documents"))
+        add(home_dir)
+        add(os.path.join(home_dir, "Desktop"))
+        add(os.path.join(home_dir, "Downloads"))
         return scan_paths
+
+    add(home_dir)
+    add(os.path.join(home_dir, "Documents"))
+    add(os.path.join(home_dir, "Desktop"))
+    add(os.path.join(home_dir, "Downloads"))
 
     user_profile = str(os.environ.get("USERPROFILE") or "").strip()
     if user_profile:
@@ -616,7 +690,11 @@ def auto_detect_wechat_data_dirs():
 
         # macOS default candidates can already point at the data root even when
         # its version name is unfamiliar to this release.
-        if sys.platform == "darwin" and _contains_wechat_account_dirs(Path(scan_path)):
+        if (
+            sys.platform == "darwin"
+            and _is_macos_wechat_container_path(Path(scan_path))
+            and _contains_wechat_account_dirs(Path(scan_path))
+        ):
             _append_detected_dir(detected_dirs, scan_path)
 
     # 策略2：进程内存分析（简化版）
@@ -678,21 +756,47 @@ def has_wxid_directories(directory):
 
 def _is_wechat_account_dir(path: Path) -> bool:
     try:
-        return path.is_dir() and path.parent.name.casefold() != "keyvalue" and (
-            (path / "db_storage").is_dir()
-            or (path / "FileStorage" / "Image").is_dir()
-            or (path / "FileStorage" / "Image2").is_dir()
-            or any(item.is_file() and item.suffix.lower() == ".db" for item in path.iterdir())
+        if not path.is_dir():
+            return False
+        name_cf = path.name.casefold()
+        if not name_cf or name_cf.startswith(".") or name_cf in _NON_ACCOUNT_DIR_NAMES:
+            return False
+        if _is_ignored_scan_dir(path):
+            return False
+        parent_cf = path.parent.name.casefold()
+        if parent_cf in _NON_ACCOUNT_PARENT_NAMES:
+            return False
+        if (path / "db_storage").is_dir():
+            return True
+        if (path / "FileStorage" / "Image").is_dir() or (path / "FileStorage" / "Image2").is_dir():
+            return True
+        msg_dir = path / "Msg"
+        if msg_dir.is_dir() and (
+            (msg_dir / "Multi").is_dir()
+            or any(item.is_file() and item.suffix.lower() == ".db" for item in msg_dir.iterdir())
+        ):
+            return True
+        if (path / "Message").is_dir() and (path / "Contact").is_dir():
+            return True
+        return any(
+            item.is_file() and bool(_WECHAT_TOPLEVEL_DB_PATTERN.match(item.name))
+            for item in path.iterdir()
         )
     except OSError:
         return False
 
 
 def _contains_wechat_account_dirs(path: Path) -> bool:
+    if _is_ignored_scan_dir(path):
+        return False
     if _is_wechat_account_dir(path):
         return True
     try:
-        return any(_is_wechat_account_dir(child) for child in path.iterdir() if child.is_dir())
+        return any(
+            _is_wechat_account_dir(child)
+            for child in path.iterdir()
+            if child.is_dir() and not _is_ignored_scan_dir(child)
+        )
     except OSError:
         return False
 
@@ -703,20 +807,30 @@ def detect_wechat_accounts_from_data_root(data_root_path: str | None = None) -> 
     seen: set[str] = set()
 
     for root in roots:
+        if _is_ignored_scan_dir(root):
+            continue
         candidates: list[Path] = [root] if _is_wechat_account_dir(root) else []
         if not candidates:
             try:
-                children = [child for child in root.iterdir() if child.is_dir()]
+                children = [
+                    child
+                    for child in root.iterdir()
+                    if child.is_dir() and not _is_ignored_scan_dir(child)
+                ]
             except OSError:
                 children = []
             candidates = [child for child in children if _is_wechat_account_dir(child)]
             if not candidates:
                 for child in children:
+                    if child.name.casefold() in _NON_ACCOUNT_DIR_NAMES:
+                        continue
                     try:
                         candidates.extend(
                             grandchild
                             for grandchild in child.iterdir()
-                            if grandchild.is_dir() and _is_wechat_account_dir(grandchild)
+                            if grandchild.is_dir()
+                            and not _is_ignored_scan_dir(grandchild)
+                            and _is_wechat_account_dir(grandchild)
                         )
                     except OSError:
                         continue
@@ -800,6 +914,8 @@ def detect_wechat_accounts_from_backup(backup_base_path: str = None) -> List[Dic
             # 然后检查子目录中的Backup目录（如xwechat_files/Backup）
             try:
                 for subdir in os.listdir(detected_dir):
+                    if subdir.startswith(".") or subdir.casefold() in _IGNORED_SCAN_DIR_NAMES:
+                        continue
                     subdir_path = os.path.join(detected_dir, subdir)
                     if os.path.isdir(subdir_path):
                         backup_test_dir = os.path.join(subdir_path, "Backup")
@@ -823,6 +939,8 @@ def detect_wechat_accounts_from_backup(backup_base_path: str = None) -> List[Dic
     try:
         # 遍历备份目录下的所有子文件夹（每个代表一个账号）
         for item in os.listdir(backup_dir):
+            if item.startswith("."):
+                continue
             account_backup_path = os.path.join(backup_dir, item)
             if not os.path.isdir(account_backup_path):
                 continue
@@ -834,6 +952,8 @@ def detect_wechat_accounts_from_backup(backup_base_path: str = None) -> List[Dic
             data_dir = None
             try:
                 for data_item in os.listdir(backup_base_path):
+                    if data_item.startswith("."):
+                        continue
                     data_item_path = os.path.join(backup_base_path, data_item)
                     if (os.path.isdir(data_item_path) and
                             data_item.startswith(f"{account_name}_") and
@@ -842,6 +962,20 @@ def detect_wechat_accounts_from_backup(backup_base_path: str = None) -> List[Dic
                         break
             except (PermissionError, OSError):
                 continue
+
+            # 若找不到实际数据目录，需校验备份目录确实属于微信账号（防止把无关程序的 Backup 子目录当成账号）
+            if not data_dir:
+                backup_path_obj = Path(account_backup_path)
+                is_wechat_backup = (
+                    account_name.startswith("wxid_")
+                    or (backup_path_obj / "BackupFiles").is_dir()
+                    or any(
+                        p.is_file() and bool(_WECHAT_TOPLEVEL_DB_PATTERN.match(p.name))
+                        for p in backup_path_obj.iterdir()
+                    )
+                )
+                if not is_wechat_backup:
+                    continue
 
             # 收集该账号的数据库文件
             databases = []
@@ -937,6 +1071,8 @@ def detect_wechat_accounts_from_login(login_base_path: str = None) -> List[Dict[
 
                 # 也检查一层子目录
                 for sub in os.listdir(detected_dir):
+                    if sub.startswith(".") or sub.casefold() in _IGNORED_SCAN_DIR_NAMES:
+                        continue
                     sub_path = os.path.join(detected_dir, sub)
                     if not os.path.isdir(sub_path):
                         continue
@@ -956,10 +1092,16 @@ def detect_wechat_accounts_from_login(login_base_path: str = None) -> List[Dict[
     # 枚举 login 目录下的子项，每个子项代表一个账号标识（可能是文件或文件夹）
     try:
         for item in os.listdir(login_dir):
+            if item.startswith("."):
+                continue
             account_name = item
             account_login_item_path = os.path.join(login_dir, item)
             # 无论是文件还是文件夹，都视为一个账号标识
             if not os.path.exists(account_login_item_path):
+                continue
+            if os.path.isfile(account_login_item_path) and item.lower().endswith(
+                (".tmp", ".log", ".lock", ".txt", ".json", ".ini")
+            ):
                 continue
 
             # 在 base_path 下查找以 {account_name}_ 开头的数据目录（与 Backup 规则一致）

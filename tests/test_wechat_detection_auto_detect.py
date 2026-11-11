@@ -407,6 +407,81 @@ class TestWechatDetectionAutoDetect(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    def test_macos_auto_detect_ignores_unrelated_db_and_backup_dirs(self):
+        """确保不会把用户的 .cc-switch / .workbuddy / cdp_profile / 第三方 Backup / 工具自身目录误判为微信账号。"""
+        from wechat_decrypt_tool import wechat_detection as wd
+
+        with TemporaryDirectory() as td:
+            home = Path(td)
+            # 1. Home 下的隐藏工具目录与非微信 Backup
+            for hidden_name, db_name in (
+                (".cc-switch", "cc-switch.db"),
+                (".workbuddy", "workbuddy.db"),
+                (".net.gtht.fy.richeasy", "fytrade.db"),
+                (".workbuddy-backup-20261022-194047", "backup.db"),
+            ):
+                d = home / hidden_name
+                d.mkdir(parents=True)
+                (d / db_name).write_bytes(b"sqlite")
+            (home / ".someapp" / "Backup" / "tasks_index-1793959877805-c85cefea").mkdir(parents=True)
+
+            # 2. 桌面中名字含“微信”但实际为浏览器配置目录的子目录
+            desktop = home / "Desktop"
+            chrome_tool = desktop / "微信记录转单文件_工具" / "cdp_profile_patch"
+            chrome_tool.mkdir(parents=True)
+            (chrome_tool / "cookies.db").write_bytes(b"sqlite")
+
+            # 3. Downloads 下的非微信下载器及本分析工具源码目录
+            downloads = home / "Downloads"
+            dy = downloads / "Dy-Downloader"
+            dy.mkdir(parents=True)
+            (dy / "tasks.db").write_bytes(b"sqlite")
+
+            self_repo = desktop / "01高仿微信WeChatDataAnalysis-main"
+            (self_repo / "src" / "wechat_decrypt_tool").mkdir(parents=True)
+            dec_out = self_repo / "output" / "databases" / "wxid_real"
+            dec_out.mkdir(parents=True)
+            (dec_out / "contact.db").write_bytes(b"decrypted")
+
+            # 4. 唯一的真实微信账号目录（在 macOS 容器目录下）
+            xwechat_root = (
+                home
+                / "Library"
+                / "Containers"
+                / "com.tencent.xinWeChat"
+                / "Data"
+                / "Documents"
+                / "xwechat_files"
+            )
+            login_dir = xwechat_root / "all_users" / "login"
+            (login_dir / "wxid_real").mkdir(parents=True)
+            (login_dir / "wxid_real" / "key_info.db").write_bytes(b"key")
+            (login_dir / ".DS_Store").write_bytes(b"finder")
+
+            real_acc = xwechat_root / "wxid_real_0847" / "db_storage"
+            real_acc.mkdir(parents=True)
+            (real_acc / "contact.db").write_bytes(b"contact")
+            (real_acc / "message_0.db").write_bytes(b"msg")
+
+            scan_paths = [
+                str(xwechat_root),
+                str(desktop),
+                str(downloads),
+                str(home),
+            ]
+            with (
+                patch.object(wd.sys, "platform", "darwin"),
+                patch.object(wd, "_build_auto_detect_scan_paths", return_value=scan_paths),
+                patch.object(wd, "get_process_list", return_value=[]),
+            ):
+                detected_dirs = wd.auto_detect_wechat_data_dirs()
+                result = wd.detect_wechat_installation()
+
+        self.assertEqual(detected_dirs, [str(xwechat_root)])
+        self.assertEqual(result["total_accounts"], 1)
+        self.assertEqual(result["accounts"][0]["account_name"], "wxid_real")
+        self.assertEqual(result["accounts"][0]["database_count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
