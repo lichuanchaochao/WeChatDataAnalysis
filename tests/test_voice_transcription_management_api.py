@@ -73,6 +73,20 @@ class TestVoiceTranscriptionManagementApi(unittest.TestCase):
         self.assertEqual(response.json(), deleted)
         delete.assert_called_once_with("small")
 
+    def test_batch_model_download_endpoint_starts_multiple_models(self):
+        download_small = {"jobId": "job-small", "model": "small", "status": "running"}
+        download_base = {"jobId": "job-base", "model": "base", "status": "running"}
+        with patch.object(chat_media.VOICE_MODEL_DOWNLOAD_MANAGER, "start", side_effect=[download_small, download_base]) as start:
+            response = self.client.post(
+                "/api/chat/media/voice/transcription/models/download-batch",
+                json={"models": ["small", "base"]},
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["jobs"], [download_small, download_base])
+        self.assertEqual(start.call_count, 2)
+
     def test_model_busy_conflicts_are_reported_as_http_409(self):
         busy = chat_media.VoiceTranscriptionError("model_busy", "模型正在使用")
         with patch.object(chat_media.VOICE_MODEL_DOWNLOAD_MANAGER, "start", side_effect=busy):

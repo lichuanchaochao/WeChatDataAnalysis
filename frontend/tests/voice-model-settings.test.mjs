@@ -154,3 +154,27 @@ test('chat model-management link focuses the voice settings section', () => {
   assert.match(settingsSource, /if \(focusTarget === 'voice'\)/)
   assert.match(settingsSource, /scrollToSection\('voice'\)/)
 })
+
+test('voice model settings supports multi-selection and concurrent batch downloads', () => {
+  // Batch API contract
+  assert.match(useApiSource, /const downloadVoiceTranscriptionModelsBatch = async \(models = \[\]\)/)
+  assert.match(useApiSource, /\/chat\/media\/voice\/transcription\/models\/download-batch/)
+  assert.match(useApiSource, /\n\s+downloadVoiceTranscriptionModelsBatch,/)
+
+  // Batch toolbar in settings
+  assert.match(settingsSource, /data-testid="voice-model-batch-bar"/)
+  assert.match(settingsSource, /全选未下载/)
+  assert.match(settingsSource, /下载所选/)
+  assert.match(settingsSource, /全部下载/)
+
+  // Multi-select state & methods
+  assert.match(settingsSource, /const selectedDownloadModelIds = ref\(\[\]\)/)
+  assert.match(settingsSource, /const toggleModelDownloadSelection = \(modelId\)/)
+  assert.match(settingsSource, /const toggleSelectAllDownloadModels = \(\)/)
+  assert.match(settingsSource, /const startSelectedVoiceModelsDownload = async \(\)/)
+  assert.match(settingsSource, /const startAllAvailableVoiceModelsDownload = async \(\)/)
+
+  // Per-model action tracking allowing concurrent downloads
+  assert.match(settingsSource, /const voiceModelActions = ref\(\{\}\)/)
+  assert.match(settingsSource, /const setVoiceModelAction = \(modelId, type = ''\)/)
+})

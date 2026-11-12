@@ -2498,11 +2498,6 @@ class VoiceModelDownloadManager:
             previous = self._jobs.get(previous_id or "")
             if previous and previous.get("status") in {"queued", "running"}:
                 return self._public(previous)
-            if any(job.get("status") in {"queued", "running"} for job in self._jobs.values()):
-                raise VoiceTranscriptionError(
-                    "download_busy",
-                    "已有其他 Whisper 模型正在下载，请等待其完成。",
-                )
             activity_key = _acquire_voice_model_download_activity(model_id)
             job_id = f"model-{model_id}-{uuid.uuid4().hex}"
             job = {
@@ -2542,6 +2537,14 @@ class VoiceModelDownloadManager:
             completion_event.set()
             raise
         return self.get(job_id)
+
+    def start_batch(self, models: list[str]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for model in models:
+            mid = str(model or "").strip()
+            if mid in VOICE_MODEL_IDS:
+                results.append(self.start(mid))
+        return results
 
     def begin_delete(self, model: str) -> bool:
         """Block new downloads, cancel the active one, and wait for its cleanup."""

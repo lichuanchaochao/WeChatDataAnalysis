@@ -1138,13 +1138,19 @@ class TestVoiceModelDeletion(unittest.TestCase):
         self.assertEqual(job["stage"], "done")
         self.assertEqual(job["percent"], 100)
 
-    def test_only_one_model_download_runs_globally(self):
-        entered = threading.Event()
-        release = threading.Event()
+    def test_multiple_models_can_download_concurrently_and_same_model_is_deduplicated(self):
+        entered_small = threading.Event()
+        release_small = threading.Event()
+        entered_base = threading.Event()
+        release_base = threading.Event()
 
         def fake_download(model, *, output_dir, progress_callback):
-            entered.set()
-            release.wait(2)
+            if model == "small":
+                entered_small.set()
+                release_small.wait(2)
+            elif model == "base":
+                entered_base.set()
+                release_base.wait(2)
             target = Path(output_dir)
             target.mkdir(parents=True, exist_ok=True)
             for filename in ("model.bin", "config.json", "tokenizer.json", "vocabulary.json"):
@@ -1163,20 +1169,26 @@ class TestVoiceModelDeletion(unittest.TestCase):
         ):
             manager = VoiceModelDownloadManager()
             first = manager.start("small")
-            self.assertTrue(entered.wait(1))
+            self.assertTrue(entered_small.wait(1))
             try:
                 self.assertEqual(manager.start("small")["jobId"], first["jobId"])
-                with self.assertRaises(VoiceTranscriptionError) as raised:
-                    manager.start("base")
+                second = manager.start("base")
+                self.assertNotEqual(second["jobId"], first["jobId"])
+                self.assertTrue(entered_base.wait(1))
             finally:
-                release.set()
+                release_small.set()
+                release_base.set()
                 deadline = time.time() + 2
                 while time.time() < deadline:
-                    if manager.get(first["jobId"])["status"] not in {"queued", "running"}:
+                    if (
+                        manager.get(first["jobId"])["status"] not in {"queued", "running"}
+                        and manager.get(second["jobId"])["status"] not in {"queued", "running"}
+                    ):
                         break
                     time.sleep(0.01)
 
-        self.assertEqual(raised.exception.code, "download_busy")
+            self.assertEqual(manager.get(first["jobId"])["status"], "done")
+            self.assertEqual(manager.get(second["jobId"])["status"], "done")
 
     def test_incomplete_managed_download_is_deletable(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1188,10 +1200,13 @@ class TestVoiceModelDeletion(unittest.TestCase):
             (target / "model.bin").write_bytes(b"partial")
             (stage / "model.bin").write_bytes(b"stage")
 
+            mock_fw = Mock()
+            mock_fw.utils = Mock()
+            mock_fw.utils.download_model.side_effect = RuntimeError("cache miss")
             with (
+                patch.dict(sys.modules, {"faster_whisper": mock_fw, "faster_whisper.utils": mock_fw.utils}),
                 patch("wechat_decrypt_tool.voice_transcription.get_voice_model_storage_root", return_value=root),
                 patch("wechat_decrypt_tool.voice_transcription.get_legacy_voice_model_storage_root", return_value=Path(tmp) / "legacy"),
-                patch("faster_whisper.utils.download_model", side_effect=RuntimeError("cache miss")),
                 patch("wechat_decrypt_tool.voice_transcription.VOICE_MODEL_DOWNLOAD_MANAGER.latest_by_model", return_value={}),
                 patch("wechat_decrypt_tool.voice_transcription.VOICE_TRANSCRIPTION_BATCH_MANAGER.has_active_model", return_value=False),
                 patch("wechat_decrypt_tool.voice_transcription.get_voice_transcription_service", return_value=SimpleNamespace(config=VoiceTranscriptionConfig(model="medium"))),

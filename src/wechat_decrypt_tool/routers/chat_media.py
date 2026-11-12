@@ -133,6 +133,10 @@ class VoiceTranscriptionSettingsRequest(BaseModel):
     download_source: Optional[Literal["huggingface", "hf-mirror"]] = Field(None, description="语音模型下载源")
 
 
+class VoiceModelBatchDownloadRequest(BaseModel):
+    models: list[str] = Field(default_factory=list, description="要下载的 Whisper 模型列表")
+
+
 class VoiceTranscriptionBatchRequest(BaseModel):
     account: Optional[str] = Field(None, description="账号目录名")
     force: bool = Field(False, description="忽略现有 Whisper 缓存并重新识别")
@@ -3894,6 +3898,20 @@ async def download_chat_voice_transcription_model(model: str, request: Request):
             status_code=status_code,
             detail={"code": exc.code, "message": exc.user_message},
         ) from exc
+
+
+@router.post("/api/chat/media/voice/transcription/models/download-batch", summary="批量下载 Whisper 模型")
+async def download_chat_voice_transcription_models_batch(req: VoiceModelBatchDownloadRequest, request: Request):
+    _require_local_voice_mutation(request)
+    jobs: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for model in req.models:
+        try:
+            job = VOICE_MODEL_DOWNLOAD_MANAGER.start(model)
+            jobs.append(job)
+        except VoiceTranscriptionError as exc:
+            errors.append({"model": model, "code": exc.code, "message": exc.user_message})
+    return {"status": "success", "jobs": jobs, "errors": errors}
 
 
 @router.get("/api/chat/media/voice/transcription/models/downloads/{job_id}", summary="查询 Whisper 模型下载任务")

@@ -340,26 +340,83 @@
                 <div v-if="voiceStatusLoading" class="mt-3 grid gap-2 sm:grid-cols-2" aria-label="正在读取模型列表">
                   <div v-for="index in 4" :key="index" class="h-[134px] rounded-[9px] bg-[var(--app-surface-muted)]" />
                 </div>
-                <div v-else-if="voiceModels.length" class="mt-3 grid gap-2.5 sm:grid-cols-2" role="list" aria-label="可用 Whisper 模型">
-                  <article
-                    v-for="model in voiceModels"
-                    :key="model.id"
-                    role="listitem"
-                    class="flex min-h-[142px] min-w-0 flex-col rounded-[9px] border p-3 transition"
-                    :class="model.selected ? 'border-[var(--app-accent)] bg-[var(--app-surface-soft)]' : 'border-[var(--app-border)] bg-[var(--app-surface-bg)] hover:border-[var(--app-accent)]'"
-                    :data-voice-model="model.id"
+                <div v-else-if="voiceModels.length">
+                  <!-- 批量下载工具栏 -->
+                  <div
+                    v-if="availableDownloadModels.length > 0"
+                    class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-soft)] px-3 py-2 text-[11px]"
+                    data-testid="voice-model-batch-bar"
                   >
-                    <div class="flex items-start justify-between gap-2">
-                      <div class="min-w-0">
-                        <div class="flex flex-wrap items-center gap-1.5">
-                          <span class="text-[13px] font-semibold text-[var(--app-text-primary)]">{{ model.name }}</span>
-                          <span v-if="model.recommended" class="rounded-full bg-[var(--app-surface-muted)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--app-accent)]">推荐</span>
-                          <span v-if="model.selected" class="rounded-full bg-[var(--app-surface-muted)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--app-accent)]">已选择</span>
-                        </div>
-                        <div class="mt-1 text-[10px] text-[var(--app-text-muted)]">{{ model.size }} · {{ model.speed }} · {{ model.quality }}</div>
-                      </div>
-                      <span class="shrink-0 text-[10px] font-medium" :class="voiceModelStateClass(model)">{{ voiceModelStateText(model) }}</span>
+                    <div class="flex items-center gap-2">
+                      <label class="flex cursor-pointer select-none items-center gap-1.5 font-medium text-[var(--app-text-primary)]">
+                        <input
+                          type="checkbox"
+                          class="h-3.5 w-3.5 rounded border-[var(--app-border)] text-[var(--app-accent)] focus:ring-[var(--app-accent)]"
+                          :checked="isAllDownloadModelsSelected"
+                          :indeterminate.prop="isSomeDownloadModelsSelected"
+                          :disabled="batchDownloadBusy"
+                          @change="toggleSelectAllDownloadModels"
+                        />
+                        <span>全选未下载 ({{ availableDownloadModels.length }})</span>
+                      </label>
+                      <span v-if="selectedEligibleDownloadModels.length > 0" class="text-[var(--app-text-muted)]">
+                        已选 {{ selectedEligibleDownloadModels.length }} 个
+                      </span>
                     </div>
+                    <div class="flex items-center gap-1.5">
+                      <button
+                        v-if="selectedEligibleDownloadModels.length > 0"
+                        type="button"
+                        class="voice-setting-focus rounded-[5px] bg-[var(--app-accent)] px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-[var(--app-accent-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+                        :disabled="batchDownloadBusy"
+                        @click="startSelectedVoiceModelsDownload"
+                      >
+                        {{ batchDownloadBusy ? '正在提交...' : `下载所选 (${selectedEligibleDownloadModels.length})` }}
+                      </button>
+                      <button
+                        type="button"
+                        class="voice-setting-focus rounded-[5px] border border-[var(--app-border)] bg-[var(--app-surface-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--app-accent)] transition hover:bg-[var(--app-neutral-btn-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+                        :disabled="batchDownloadBusy"
+                        @click="startAllAvailableVoiceModelsDownload"
+                      >
+                        全部下载 ({{ availableDownloadModels.length }})
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="mt-3 grid gap-2.5 sm:grid-cols-2" role="list" aria-label="可用 Whisper 模型">
+                    <article
+                      v-for="model in voiceModels"
+                      :key="model.id"
+                      role="listitem"
+                      class="flex min-h-[142px] min-w-0 flex-col rounded-[9px] border p-3 transition"
+                      :class="model.selected ? 'border-[var(--app-accent)] bg-[var(--app-surface-soft)]' : 'border-[var(--app-border)] bg-[var(--app-surface-bg)] hover:border-[var(--app-accent)]'"
+                      :data-voice-model="model.id"
+                    >
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                          <div class="flex flex-wrap items-center gap-1.5">
+                            <label
+                              v-if="!model.downloaded && model.downloadable && !isVoiceModelDownloading(model) && !isVoiceModelDeletePending(model.id)"
+                              class="inline-flex cursor-pointer items-center mr-0.5"
+                              :title="`选择 ${model.name} 进行批量下载`"
+                            >
+                              <input
+                                type="checkbox"
+                                class="h-3.5 w-3.5 rounded border-[var(--app-border)] text-[var(--app-accent)] focus:ring-[var(--app-accent)]"
+                                :checked="isModelSelectedForDownload(model.id)"
+                                :disabled="batchDownloadBusy || isVoiceModelActionBusy(model.id)"
+                                @change="toggleModelDownloadSelection(model.id)"
+                              />
+                            </label>
+                            <span class="text-[13px] font-semibold text-[var(--app-text-primary)]">{{ model.name }}</span>
+                            <span v-if="model.recommended" class="rounded-full bg-[var(--app-surface-muted)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--app-accent)]">推荐</span>
+                            <span v-if="model.selected" class="rounded-full bg-[var(--app-surface-muted)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--app-accent)]">已选择</span>
+                          </div>
+                          <div class="mt-1 text-[10px] text-[var(--app-text-muted)]">{{ model.size }} · {{ model.speed }} · {{ model.quality }}</div>
+                        </div>
+                        <span class="shrink-0 text-[10px] font-medium" :class="voiceModelStateClass(model)">{{ voiceModelStateText(model) }}</span>
+                      </div>
 
                     <div class="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-[var(--app-text-secondary)]">{{ model.description }}</div>
                     <div v-if="isVoiceModelDownloading(model)" class="mt-2" data-voice-model-progress>
@@ -420,7 +477,8 @@
                     </div>
                   </article>
                 </div>
-                <div v-else-if="!voiceDeviceError" class="mt-3 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-4 text-center text-[11px] text-[var(--app-text-muted)]">后端未返回可用模型列表。</div>
+              </div>
+              <div v-else-if="!voiceDeviceError" class="mt-3 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-4 text-center text-[11px] text-[var(--app-text-muted)]">后端未返回可用模型列表。</div>
 
                 <div v-if="voiceModelLocked" class="mt-2 text-[11px] leading-relaxed text-[var(--app-text-secondary)]">模型由 WECHAT_TOOL_WHISPER_MODEL 环境变量固定，界面中不可切换。</div>
                 <div v-if="voiceStatusReason" class="mt-2 text-[11px] leading-relaxed text-[var(--app-text-muted)]">{{ voiceStatusReason }}</div>
@@ -934,6 +992,9 @@ const voiceModel = ref('medium')
 const voiceModels = ref([])
 const voiceModelSource = ref('default')
 const voiceModelAction = ref({ id: '', type: '' })
+const voiceModelActions = ref({})
+const selectedDownloadModelIds = ref([])
+const batchDownloadBusy = ref(false)
 const voiceModelDeletePendingIds = ref([])
 const voiceModelError = ref('')
 const voiceModelMessage = ref('')
@@ -1316,10 +1377,139 @@ const voiceModelDownloadButtonText = (model) => {
   return '下载'
 }
 
+const setVoiceModelAction = (modelId, type = '') => {
+  const id = String(modelId || '').trim()
+  if (!id) return
+  if (type) {
+    voiceModelActions.value = { ...voiceModelActions.value, [id]: type }
+    voiceModelAction.value = { id, type }
+  } else {
+    const next = { ...voiceModelActions.value }
+    delete next[id]
+    voiceModelActions.value = next
+    if (voiceModelAction.value.id === id) {
+      voiceModelAction.value = { id: '', type: '' }
+    }
+  }
+}
+
 const isVoiceModelActionBusy = (modelId, type = '') => {
-  const action = voiceModelAction.value
-  if (!type) return !!action.id
-  return action.id === String(modelId || '') && action.type === type
+  const id = String(modelId || '').trim()
+  const current = voiceModelActions.value[id] || (voiceModelAction.value.id === id ? voiceModelAction.value.type : '')
+  if (!type) return !!current
+  return current === type
+}
+
+const availableDownloadModels = computed(() => {
+  return voiceModels.value.filter((model) => (
+    !model.downloaded
+    && model.downloadable
+    && !isVoiceModelDownloading(model)
+    && !isVoiceModelDeletePending(model.id)
+  ))
+})
+
+const selectedEligibleDownloadModels = computed(() => {
+  const availableSet = new Set(availableDownloadModels.value.map((m) => m.id))
+  return selectedDownloadModelIds.value.filter((id) => availableSet.has(id))
+})
+
+const isModelSelectedForDownload = (modelId) => {
+  return selectedDownloadModelIds.value.includes(String(modelId || '').trim())
+}
+
+const toggleModelDownloadSelection = (modelId) => {
+  const id = String(modelId || '').trim()
+  if (!id) return
+  if (isModelSelectedForDownload(id)) {
+    selectedDownloadModelIds.value = selectedDownloadModelIds.value.filter((item) => item !== id)
+  } else {
+    selectedDownloadModelIds.value = [...selectedDownloadModelIds.value, id]
+  }
+}
+
+const isAllDownloadModelsSelected = computed(() => {
+  if (!availableDownloadModels.value.length) return false
+  return availableDownloadModels.value.every((m) => isModelSelectedForDownload(m.id))
+})
+
+const isSomeDownloadModelsSelected = computed(() => {
+  return selectedEligibleDownloadModels.value.length > 0 && !isAllDownloadModelsSelected.value
+})
+
+const toggleSelectAllDownloadModels = () => {
+  if (isAllDownloadModelsSelected.value) {
+    selectedDownloadModelIds.value = []
+  } else {
+    selectedDownloadModelIds.value = availableDownloadModels.value.map((m) => m.id)
+  }
+}
+
+const startBatchVoiceModelDownload = async (modelIdsToDownload = []) => {
+  const ids = Array.isArray(modelIdsToDownload) ? modelIdsToDownload : []
+  const targets = voiceModels.value.filter((m) => (
+    ids.includes(m.id)
+    && !m.downloaded
+    && m.downloadable
+    && !isVoiceModelDownloading(m)
+    && !isVoiceModelDeletePending(m.id)
+  ))
+  if (!targets.length) return
+
+  batchDownloadBusy.value = true
+  voiceModelError.value = ''
+  voiceModelMessage.value = ''
+
+  targets.forEach((m) => {
+    setVoiceModelAction(m.id, 'download')
+  })
+
+  try {
+    const resp = await api.downloadVoiceTranscriptionModelsBatch(targets.map((m) => m.id))
+    const jobs = Array.isArray(resp?.jobs) ? resp.jobs : []
+    const errors = Array.isArray(resp?.errors) ? resp.errors : []
+
+    jobs.forEach((job) => {
+      if (job?.model) {
+        updateVoiceModelDownload(job.model, job)
+      }
+    })
+
+    const queuedModelIds = new Set(jobs.map((j) => j.model))
+    selectedDownloadModelIds.value = selectedDownloadModelIds.value.filter((id) => !queuedModelIds.has(id))
+
+    if (jobs.length > 0) {
+      voiceModelMessage.value = `已成功提交 ${jobs.length} 个模型下载任务。`
+      scheduleVoiceModelDownloadPolling()
+    }
+    if (errors.length > 0) {
+      const errMsgs = errors.map((e) => `${e.model}: ${e.message}`).join('; ')
+      voiceModelError.value = `部分模型提交失败: ${errMsgs}`
+    }
+  } catch (e) {
+    const results = await Promise.allSettled(targets.map((m) => startVoiceModelDownload(m)))
+    const successCount = results.filter((r) => r.status === 'fulfilled').length
+    if (successCount > 0) {
+      voiceModelMessage.value = `已启动 ${successCount} 个模型下载任务。`
+    }
+  } finally {
+    targets.forEach((m) => {
+      setVoiceModelAction(m.id, '')
+    })
+    batchDownloadBusy.value = false
+  }
+}
+
+const startSelectedVoiceModelsDownload = async () => {
+  const selected = selectedEligibleDownloadModels.value
+  if (!selected.length) return
+  await startBatchVoiceModelDownload(selected)
+}
+
+const startAllAvailableVoiceModelsDownload = async () => {
+  const allAvailable = availableDownloadModels.value.map((m) => m.id)
+  if (!allAvailable.length) return
+  await startBatchVoiceModelDownload(allAvailable)
 }
 
 const voiceModelStateText = (model) => {
@@ -1430,6 +1620,7 @@ function scheduleVoiceModelDownloadPolling() {
 const startVoiceModelDownload = async (model) => {
   if (!model?.id || !model.downloadable || isVoiceModelDownloading(model) || isVoiceModelActionBusy(model.id)) return
   const generation = voiceModelDownloadGeneration(model.id)
+  setVoiceModelAction(model.id, 'download')
   voiceModelAction.value = { id: model.id, type: 'download' }
   voiceModelError.value = ''
   voiceModelMessage.value = ''
@@ -1440,6 +1631,7 @@ const startVoiceModelDownload = async (model) => {
     if (generation !== voiceModelDownloadGeneration(model.id) || isVoiceModelDeletePending(model.id)) return
     updateVoiceModelDownload(model.id, job)
     voiceModelMessage.value = `${model.name} 已加入下载队列。`
+    selectedDownloadModelIds.value = selectedDownloadModelIds.value.filter((id) => id !== model.id)
     scheduleVoiceModelDownloadPolling()
   } catch (e) {
     if (generation !== voiceModelDownloadGeneration(model.id) || isVoiceModelDeletePending(model.id)) return
@@ -1448,6 +1640,7 @@ const startVoiceModelDownload = async (model) => {
     if (voiceModelDownloadStartPromises.get(model.id) === startRequest) {
       voiceModelDownloadStartPromises.delete(model.id)
     }
+    setVoiceModelAction(model.id, '')
     if (isVoiceModelActionBusy(model.id, 'download')) voiceModelAction.value = { id: '', type: '' }
   }
 }
@@ -1455,6 +1648,7 @@ const startVoiceModelDownload = async (model) => {
 const selectVoiceModel = async (model) => {
   if (!model?.id || !model.downloaded || model.selected || voiceModelLocked.value || isVoiceModelActionBusy(model.id)) return
   const generation = voiceModelDownloadGeneration(model.id)
+  setVoiceModelAction(model.id, 'select')
   voiceModelAction.value = { id: model.id, type: 'select' }
   voiceModelError.value = ''
   voiceModelMessage.value = ''
@@ -1466,6 +1660,7 @@ const selectVoiceModel = async (model) => {
     if (generation !== voiceModelDownloadGeneration(model.id) || isVoiceModelDeletePending(model.id)) return
     voiceModelError.value = e?.message || `选择 ${model.name} 失败`
   } finally {
+    setVoiceModelAction(model.id, '')
     if (isVoiceModelActionBusy(model.id, 'select')) voiceModelAction.value = { id: '', type: '' }
   }
 }
@@ -1480,6 +1675,7 @@ const removeVoiceModel = async (model) => {
 
   invalidateVoiceModelDownload(model.id)
   setVoiceModelDeletePending(model.id, true)
+  setVoiceModelAction(model.id, 'delete')
   voiceModelAction.value = { id: model.id, type: 'delete' }
   voiceModelError.value = ''
   voiceModelMessage.value = ''
@@ -1511,6 +1707,7 @@ const removeVoiceModel = async (model) => {
     voiceModelError.value = e?.message || `删除 ${model.name} 失败`
   } finally {
     setVoiceModelDeletePending(model.id, false)
+    setVoiceModelAction(model.id, '')
     if (isVoiceModelActionBusy(model.id, 'delete')) voiceModelAction.value = { id: '', type: '' }
     scheduleVoiceModelDownloadPolling()
   }

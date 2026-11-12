@@ -589,6 +589,14 @@ export const useApi = () => {
     })
   }
 
+  const downloadVoiceTranscriptionModelsBatch = async (models = []) => {
+    const list = Array.isArray(models) ? models.map(m => String(m || '').trim()).filter(Boolean) : []
+    return await request('/chat/media/voice/transcription/models/download-batch', {
+      method: 'POST',
+      body: { models: list }
+    })
+  }
+
   const getVoiceTranscriptionModelDownload = async (jobId) => {
     const id = encodeURIComponent(String(jobId || '').trim())
     return await request(`/chat/media/voice/transcription/models/downloads/${id}`)
@@ -1277,6 +1285,7 @@ export const useApi = () => {
     setVoiceTranscriptionDevice,
     setVoiceTranscriptionModel,
     downloadVoiceTranscriptionModel,
+    downloadVoiceTranscriptionModelsBatch,
     getVoiceTranscriptionModelDownload,
     deleteVoiceTranscriptionModel,
     transcribeChatVoice,
