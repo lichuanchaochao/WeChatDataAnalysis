@@ -144,6 +144,22 @@ class TestKeyServiceImageKeyAccountMatch(unittest.TestCase):
 
         self.assertEqual(result.name, "MSG0.db")
 
+    def test_resolve_v4_probe_db_file_prefers_core_login_db_over_favorite(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_storage = Path(temp_dir) / "xwechat_files" / "wxid_demo" / "db_storage"
+            (db_storage / "favorite").mkdir(parents=True)
+            (db_storage / "session").mkdir(parents=True)
+            (db_storage / "message").mkdir(parents=True)
+            (db_storage / "sns").mkdir(parents=True)
+            (db_storage / "favorite" / "favorite.db").write_bytes(b"\x01" * 4096)
+            (db_storage / "sns" / "sns.db").write_bytes(b"\x02" * 4096)
+            (db_storage / "session" / "session.db").write_bytes(b"\x03" * 4096)
+            (db_storage / "message" / "message_0.db").write_bytes(b"\x04" * 4096)
+
+            result = key_service._resolve_v4_probe_db_file(str(db_storage))
+
+        self.assertEqual(result.name, "session.db")
+
     def test_get_db_key_workflow_uses_v4_before_hook(self) -> None:
         with mock.patch.object(
             key_service,

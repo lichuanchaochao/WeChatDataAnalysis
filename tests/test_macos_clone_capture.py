@@ -437,6 +437,56 @@ class TestMacOSCloneCapture(unittest.TestCase):
         namespace["_pbkdf_callback"](FakeFrame(), None, None)
         self.assertEqual(len(captured), 2)
 
+    def test_rounds_256k_passphrase_candidate_still_checked_on_salt_mismatch(self) -> None:
+        expected_salt = b"\x01" * 16
+        other_db_salt = b"\x02" * 16
+        passphrase = b"\x03" * 32
+        script = build_lldb_salt_capture_script(
+            Path("/tmp/result.json"),
+            [expected_salt],
+            probe_page1=b"x" * 4096,
+        )
+
+        class FakeError:
+            def Success(self) -> bool:
+                return True
+
+        fake_lldb = types.SimpleNamespace(SBError=FakeError)
+        namespace = {"__name__": "test_wedata_capture_256k"}
+        with patch.dict(sys.modules, {"lldb": fake_lldb}):
+            exec(compile(script, "<capture-script>", "exec"), namespace)
+
+        class FakeProcess:
+            def ReadMemory(self, address, length, _error):
+                values = {0x1000: passphrase, 0x2000: other_db_salt}
+                return values[address][:length]
+
+        process = FakeProcess()
+        registers = {"x0": 2, "x1": 0x1000, "x2": 32, "x3": 0x2000, "x4": 16, "x5": 5, "x6": 2}
+
+        class FakeFrame:
+            def GetThread(self):
+                return types.SimpleNamespace(GetProcess=lambda: process)
+
+            def FindRegister(self, name):
+                return types.SimpleNamespace(GetValueAsUnsigned=lambda: registers[name])
+
+        captured = []
+        namespace["_write_result"] = lambda _payload: True
+        namespace["_record_diagnostic"] = lambda _name: None
+        namespace["_save_valid_candidate"] = lambda candidate, database_salt, source, _process: captured.append(
+            (candidate, database_salt, source)
+        ) or False
+
+        namespace["_pbkdf_callback"](FakeFrame(), None, None)
+        self.assertEqual(captured, [])
+
+        registers["x6"] = 256000
+        namespace["_pbkdf_callback"](FakeFrame(), None, None)
+        self.assertEqual(captured, [(passphrase, other_db_salt.hex(), "pbkdf_account_passphrase")])
+        namespace["_pbkdf_callback"](FakeFrame(), None, None)
+        self.assertEqual(len(captured), 1)
+
     def test_capture_reports_debug_process_exit_without_waiting_for_generic_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)

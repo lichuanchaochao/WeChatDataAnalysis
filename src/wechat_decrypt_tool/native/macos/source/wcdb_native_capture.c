@@ -70,6 +70,8 @@ typedef struct {
     bool captured;
     bool validated;
     char db_key_hex[65];
+    uint8_t last_rejected_candidate[KEY_SIZE];
+    bool has_last_rejected_candidate;
     uint64_t pbkdf_calls;
     uint64_t wcdb_profile_hits;
     uint64_t rounds2_hits;
@@ -858,16 +860,26 @@ static kern_return_t handle_breakpoint(thread_t thread) {
         g_ctx.last_stage = "salt_read_failed";
         return continue_thread_at_x16(thread);
     }
-    if (!salt_matches_expected(state.__x[6], salt)) {
+    bool salt_matched = salt_matches_expected(state.__x[6], salt);
+    if (salt_matched) {
+        g_ctx.salt_matches += 1;
+        g_ctx.last_stage = "salt_matched";
+    } else {
+        /* Still test the 256000-round account passphrase even if WeChat opens
+         * another encrypted database before the configured probe database; all
+         * WCDB databases in the account derive keys from that same passphrase. */
         g_ctx.last_stage = "salt_mismatch";
-        return continue_thread_at_x16(thread);
     }
-    g_ctx.salt_matches += 1;
-    g_ctx.last_stage = "salt_matched";
     kr = remote_read_exact(g_ctx.task, (mach_vm_address_t)state.__x[1], candidate, sizeof(candidate));
     if (kr != KERN_SUCCESS) {
         g_ctx.candidate_read_failures += 1;
         g_ctx.last_stage = "candidate_read_failed";
+        return continue_thread_at_x16(thread);
+    }
+    if (!salt_matched && g_ctx.has_last_rejected_candidate &&
+        memcmp(candidate, g_ctx.last_rejected_candidate, sizeof(candidate)) == 0) {
+        g_ctx.candidate_rejects += 1;
+        g_ctx.last_stage = "candidate_rejected";
         return continue_thread_at_x16(thread);
     }
     if (candidate_matches_page1(candidate)) {
@@ -892,6 +904,8 @@ static kern_return_t handle_breakpoint(thread_t thread) {
         }
         return KERN_SUCCESS;
     }
+    memcpy(g_ctx.last_rejected_candidate, candidate, sizeof(candidate));
+    g_ctx.has_last_rejected_candidate = true;
     g_ctx.candidate_rejects += 1;
     g_ctx.last_stage = "candidate_rejected";
     return continue_thread_at_x16(thread);

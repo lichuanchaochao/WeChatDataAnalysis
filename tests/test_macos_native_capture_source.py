@@ -31,3 +31,14 @@ def test_helper_source_contains_no_environment_specific_paths() -> None:
     assert "/Users/" not in source
     assert "/Volumes/" not in source
     assert "wxid_" not in source
+
+
+def test_handle_breakpoint_validates_256k_candidate_even_on_salt_mismatch() -> None:
+    source = SOURCE.read_text(encoding="utf-8")
+    callback = source[source.index("static kern_return_t handle_breakpoint"):source.index("kern_return_t catch_exception_raise(")]
+    operands_guard = callback.index("if (!breakpoint_operands_match(&state) || !g_ctx.page1_loaded)")
+    mismatch_pos = callback.index('g_ctx.last_stage = "salt_mismatch";')
+    candidate_read = callback.index("remote_read_exact(g_ctx.task, (mach_vm_address_t)state.__x[1], candidate")
+    validate_call = callback.index("if (candidate_matches_page1(candidate))")
+    assert operands_guard < mismatch_pos < candidate_read < validate_call
+    assert "return continue_thread_at_x16(thread);" not in callback[mismatch_pos:candidate_read]

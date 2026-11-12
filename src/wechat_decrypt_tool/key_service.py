@@ -51,6 +51,11 @@ logger = logging.getLogger(__name__)
 WECHAT_EXECUTABLE_NAMES = ("Weixin.exe", "WeChat.exe")
 KEY_SIZE = 32
 V4_DB_NAME_PRIORITY = (
+    "session.db",
+    "message_0.db",
+    "contact.db",
+    "general.db",
+    "message_1.db",
     "msg0.db",
     "msg.db",
     "micromsg.db",

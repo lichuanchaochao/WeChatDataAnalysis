@@ -500,6 +500,7 @@ DIAGNOSTICS = {{
     "candidate_rejections": 0,
     "partial_candidates": 0,
 }}
+REJECTED_256K_CANDIDATES = set()
 
 {_LLDB_BREAKPOINT_VALIDATION_SOURCE}
 
@@ -653,6 +654,14 @@ def _pbkdf_callback(frame, bp_loc, _internal_dict):
         database_salt = salt_hex if salt_hex in EXPECTED_SALTS else ""
         source = "pbkdf_database_password"
     if not database_salt:
+        if not (algorithm == 2 and prf == 5 and rounds == 256000 and password_len == 32):
+            return False
+        password = process.ReadMemory(password_ptr, password_len, error)
+        if not error.Success() or len(password) != password_len or password in REJECTED_256K_CANDIDATES:
+            return False
+        _save_valid_candidate(password, salt_hex, "pbkdf_account_passphrase", process)
+        if len(REJECTED_256K_CANDIDATES) < 64:
+            REJECTED_256K_CANDIDATES.add(password)
         return False
     _record_diagnostic("pbkdf_salt_hits")
     password = process.ReadMemory(password_ptr, password_len, error)
