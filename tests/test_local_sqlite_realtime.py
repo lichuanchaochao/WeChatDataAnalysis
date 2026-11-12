@@ -282,11 +282,22 @@ class TestLocalSQLiteRealtime(unittest.TestCase):
                 # Second call should NOT hit refresh_native_core_lease again once latched.
                 self.assertEqual(refresh_mock.call_count, 1)
 
-    def test_macos_anti_revoke_install_returns_explicit_unsupported_message(self) -> None:
-        with patch.object(anti_revoke_service.sys, "platform", "darwin"):
+    def test_macos_anti_revoke_install_requires_wechat_quit_when_running(self) -> None:
+        with (
+            patch.object(anti_revoke_service.sys, "platform", "darwin"),
+            patch.object(
+                anti_revoke_service,
+                "_resolve_account_info",
+                return_value=(Path("/tmp/db_storage"), "wxid_demo", "11" * 32),
+            ),
+            patch(
+                "wechat_decrypt_tool.macos_anti_revoke.is_wechat_running_macos",
+                return_value=True,
+            ),
+        ):
             res = anti_revoke_service.install_anti_revoke_triggers("wxid_demo", ["wxid_a"])
         self.assertFalse(res.get("success"))
-        self.assertIn("Windows", str(res.get("error") or ""))
+        self.assertIn("退出微信", str(res.get("error") or ""))
 
 
 if __name__ == "__main__":
