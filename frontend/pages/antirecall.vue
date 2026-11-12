@@ -48,6 +48,21 @@
         <div class="mt-3 border-t border-gray-100 dark:border-gray-800/70 pt-2.5 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500">
           对选中的会话安装防撤回触发器后，对方撤回的消息在微信本体仍会保留可见。安装/卸载针对具体会话，微信升级后一般无需重复。
         </div>
+
+        <div
+          v-if="requiresWechatQuit"
+          class="mt-3 rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
+          :class="wechatRunning
+            ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200'"
+        >
+          <span v-if="wechatRunning">
+            检测到微信客户端正在运行：为避免写库冲突并保护聊天记录，安装或还原防撤回前请先完全退出微信（Cmd+Q），再点击右上角“刷新状态”即可操作。
+          </span>
+          <span v-else>
+            检测到微信客户端已退出，当前可安全写入防撤回触发器；安装或还原完成后重新打开微信即可生效。
+          </span>
+        </div>
       </section>
 
       <!-- Middle Card: Sessions List -->
@@ -115,7 +130,8 @@
             <button
               type="button"
               class="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-              :disabled="busy || !uninstalledSessionIds.length"
+              :disabled="busy || !uninstalledSessionIds.length || (requiresWechatQuit && wechatRunning)"
+              :title="requiresWechatQuit && wechatRunning ? '请先退出微信客户端后再安装防撤回' : ''"
               @click="installBatch(uninstalledSessionIds)"
             >
               <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -128,7 +144,8 @@
             <button
               type="button"
               class="flex items-center gap-1 rounded-md border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 px-2.5 py-1 text-[11px] font-medium text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/60 disabled:opacity-50 disabled:cursor-not-allowed transition"
-              :disabled="busy || !installedSessionIds.length"
+              :disabled="busy || !installedSessionIds.length || (requiresWechatQuit && wechatRunning)"
+              :title="requiresWechatQuit && wechatRunning ? '请先退出微信客户端后再还原防撤回' : ''"
               @click="uninstallBatch(installedSessionIds)"
             >
               <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -208,11 +225,12 @@
             <div class="shrink-0">
               <button
                 type="button"
-                class="rounded px-2.5 py-0.5 text-[11px] font-medium transition disabled:opacity-50"
+                class="rounded px-2.5 py-0.5 text-[11px] font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
                 :class="s.installed
                   ? 'border border-gray-200 dark:border-gray-700 bg-transparent text-gray-600 dark:text-gray-400 hover:border-red-300 hover:text-red-600 dark:hover:border-red-800 dark:hover:text-red-400'
                   : 'border border-blue-500/30 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-600 dark:hover:text-white'"
-                :disabled="busy || operatingSession === s.username"
+                :disabled="busy || operatingSession === s.username || (requiresWechatQuit && wechatRunning)"
+                :title="requiresWechatQuit && wechatRunning ? '请先退出微信客户端后再操作' : ''"
                 @click="toggleSession(s)"
               >
                 <span v-if="operatingSession === s.username">处理中…</span>
@@ -242,9 +260,14 @@
               </svg>
             </div>
             <div class="min-w-0">
-              <div class="text-[13px] font-medium text-gray-900 dark:text-gray-100">新群聊自动安装</div>
+              <div class="text-[13px] font-medium text-gray-900 dark:text-gray-100">新群聊自动安装偏好</div>
               <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
-                只处理开启后首次观察到的新群，会延迟排队，不影响消息通知
+                <template v-if="requiresWechatQuit">
+                  仅保存账号偏好；为保护微信数据库安全，macOS 端暂不在微信运行时自动写库，请退出微信后点击上方「全部安装」补齐新群。
+                </template>
+                <template v-else>
+                  只处理开启后首次观察到的新群，会延迟排队，不影响消息通知
+                </template>
               </div>
             </div>
           </div>
@@ -308,6 +331,8 @@ const { privacyMode } = storeToRefs(privacyStore)
 const sessions = ref([])
 const totalCount = ref(0)
 const installedCount = ref(0)
+const requiresWechatQuit = ref(false)
+const wechatRunning = ref(false)
 const loading = ref(false)
 const busy = ref(false)
 const configLoading = ref(false)
@@ -324,14 +349,15 @@ const toast = reactive({
   timer: null
 })
 
-const showToast = (message, type = 'success') => {
+const showToast = (message, type = 'success', duration = null) => {
   if (toast.timer) clearTimeout(toast.timer)
   toast.message = message
   toast.type = type
   toast.visible = true
+  const timeoutMs = Number.isFinite(duration) && duration > 0 ? duration : (type === 'error' ? 7000 : 3500)
   toast.timer = setTimeout(() => {
     toast.visible = false
-  }, 3500)
+  }, timeoutMs)
 }
 
 const filterTabs = [
@@ -363,6 +389,8 @@ const refreshData = async (manual = false) => {
     sessions.value = []
     totalCount.value = 0
     installedCount.value = 0
+    requiresWechatQuit.value = false
+    wechatRunning.value = false
     return
   }
 
@@ -378,6 +406,8 @@ const refreshData = async (manual = false) => {
       sessions.value = Array.isArray(sessionsRes.sessions) ? sessionsRes.sessions : []
       totalCount.value = Number(sessionsRes.totalCount || sessions.value.length)
       installedCount.value = Number(sessionsRes.installedCount || sessions.value.filter(s => s.installed).length)
+      requiresWechatQuit.value = Boolean(sessionsRes.requiresWechatQuit)
+      wechatRunning.value = Boolean(sessionsRes.wechatRunning)
     }
 
     if (configRes && typeof configRes.antiRevokeAutoApplyNewGroups === 'boolean') {
@@ -410,6 +440,9 @@ const toggleSession = async (session) => {
       showToast(willInstall ? `已为「${session.displayName}」安装防撤回` : `已还原「${session.displayName}」的防撤回`)
       await refreshData()
     } else {
+      if (res?.code === 'wechat_running') {
+        wechatRunning.value = true
+      }
       showToast(res?.error || '操作失败', 'error')
     }
   } catch (err) {
@@ -440,6 +473,9 @@ const installBatch = async (sessionIds) => {
       installedCount.value = sessions.value.filter(s => s.installed).length
       await refreshData()
     } else {
+      if (res?.code === 'wechat_running') {
+        wechatRunning.value = true
+      }
       showToast(res?.error || '批量安装失败', 'error')
     }
   } catch (err) {
@@ -468,6 +504,9 @@ const uninstallBatch = async (sessionIds) => {
       installedCount.value = sessions.value.filter(s => s.installed).length
       await refreshData()
     } else {
+      if (res?.code === 'wechat_running') {
+        wechatRunning.value = true
+      }
       showToast(res?.error || '批量还原失败', 'error')
     }
   } catch (err) {

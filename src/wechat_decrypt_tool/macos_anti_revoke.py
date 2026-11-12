@@ -434,6 +434,7 @@ def _rewrite_db_with_ops(
     action: str,
     table_ops: list[str],
     pending_ops: list[str],
+    pending_delete_ops: list[str] | None = None,
     self_rowid: int | None,
 ) -> None:
     plain_bytes, crypto = _decrypt_db_with_wal(db_file, key_bytes)
@@ -459,10 +460,12 @@ def _rewrite_db_with_ops(
                         f"REPLACE INTO {_PENDING_TABLE}(session_id, updated_at) VALUES (?, ?)",
                         (sid, now_ts),
                     )
+                for sid in pending_delete_ops or ():
+                    conn.execute(f"DELETE FROM {_PENDING_TABLE} WHERE session_id = ?", (sid,))
             else:
                 for tbl in table_ops:
                     _uninstall_triggers_for_table(conn, tbl)
-                for sid in pending_ops:
+                for sid in [*pending_ops, *(pending_delete_ops or ())]:
                     conn.execute(f"DELETE FROM {_PENDING_TABLE} WHERE session_id = ?", (sid,))
             conn.commit()
             post_check = conn.execute("PRAGMA quick_check").fetchall()
@@ -509,6 +512,7 @@ def execute_macos_anti_revoke_action(
     if running_fn():
         return {
             "success": False,
+            "code": "wechat_running",
             "error": "为避免写库冲突并保护聊天记录安全，请先完全退出微信客户端（Cmd+Q），再点击安装/卸载防撤回；完成后重新打开微信即可生效。",
         }
 
@@ -529,6 +533,7 @@ def execute_macos_anti_revoke_action(
     primary_db = msg_dbs[0]
     db_table_ops: dict[Path, list[str]] = {}
     db_pending_ops: dict[Path, list[str]] = {}
+    db_pending_delete_ops: dict[Path, list[str]] = {}
     results: dict[str, bool] = {}
 
     for sid in cleaned_ids:
@@ -537,15 +542,12 @@ def execute_macos_anti_revoke_action(
         if normalized_action == "install":
             if target_db is not None:
                 plan = plans[target_db]
-                if tbl_name in plan["installed_tables"] and sid not in plan["pending"]:
-                    results[sid] = True
-                else:
-                    if tbl_name not in plan["installed_tables"]:
-                        db_table_ops.setdefault(target_db, []).append(tbl_name)
-                    if sid in plan["pending"]:
-                        # Remove pending only on uninstall? Keep pending cleared once table trigger installed
-                        pass
-                    results[sid] = True
+                if tbl_name not in plan["installed_tables"]:
+                    db_table_ops.setdefault(target_db, []).append(tbl_name)
+                for db_file, db_plan in plans.items():
+                    if sid in db_plan["pending"]:
+                        db_pending_delete_ops.setdefault(db_file, []).append(sid)
+                results[sid] = True
             else:
                 if any(sid in p["pending"] for p in plans.values()):
                     results[sid] = True
@@ -560,11 +562,12 @@ def execute_macos_anti_revoke_action(
                     db_pending_ops.setdefault(db_file, []).append(sid)
             results[sid] = True
 
-    touched_dbs = set(db_table_ops.keys()) | set(db_pending_ops.keys())
+    touched_dbs = set(db_table_ops.keys()) | set(db_pending_ops.keys()) | set(db_pending_delete_ops.keys())
     if touched_dbs:
         if running_fn():
             return {
                 "success": False,
+                "code": "wechat_running",
                 "error": "检测到微信客户端刚刚启动，已中止写入以确保数据库安全。请先完全退出微信后重试。",
             }
         try:
@@ -578,6 +581,7 @@ def execute_macos_anti_revoke_action(
                     action=normalized_action,
                     table_ops=db_table_ops.get(db_file, []),
                     pending_ops=db_pending_ops.get(db_file, []),
+                    pending_delete_ops=db_pending_delete_ops.get(db_file, []),
                     self_rowid=plans[db_file]["self_rowid"],
                 )
         except PermissionError:

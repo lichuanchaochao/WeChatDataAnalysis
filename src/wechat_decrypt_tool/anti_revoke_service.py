@@ -244,10 +244,19 @@ def get_anti_revoke_sessions(account: str) -> Dict[str, Any]:
                 "summary": str(row.get("summary") or ""),
             })
 
+        wechat_running = False
+        if sys.platform == "darwin":
+            from .macos_anti_revoke import is_wechat_running_macos
+
+            wechat_running = bool(is_wechat_running_macos())
+
         return {
             "success": True,
             "installedCount": installed_count,
             "totalCount": len(sessions),
+            "platform": sys.platform,
+            "requiresWechatQuit": sys.platform != "win32",
+            "wechatRunning": wechat_running,
             "sessions": sessions,
         }
     finally:

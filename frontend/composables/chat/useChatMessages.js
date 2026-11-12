@@ -2080,6 +2080,29 @@ export const useChatMessages = ({
     message._imageLargeError = ''
 
     try {
+      const resp = await fetch(nextUrl, {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store'
+      })
+      if (!resp.ok) {
+        let detail = ''
+        try {
+          const payload = await resp.json()
+          detail = String(payload?.detail?.message || payload?.detail || '').trim()
+        } catch {}
+        throw new Error(detail || '微信本地目录暂未找到原图，请先在电脑微信中点开该图片后重试')
+      }
+
+      const resolution = String(resp.headers.get('X-Image-Resolution') || '').trim().toLowerCase()
+      try {
+        await resp.body?.cancel?.()
+      } catch {}
+
+      if (resolution === 'thumb') {
+        throw new Error('微信本地暂无原图（当前仅有缩略图），请先在电脑微信点开该图片后再试')
+      }
+
       await preloadImageUrl(nextUrl)
       rememberLargeImagePreference(message, triedAt)
       message.imageUrl = nextUrl

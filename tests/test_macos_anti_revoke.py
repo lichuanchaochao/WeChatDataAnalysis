@@ -139,6 +139,67 @@ class TestMacOSAntiRevoke(unittest.TestCase):
                     ],
                 )
 
+                blocked = execute_macos_anti_revoke_action(
+                    "install",
+                    "wxid_self",
+                    [peer],
+                    db_storage_dir=db_storage,
+                    native_wxid="wxid_self",
+                    hex_key=passphrase.hex(),
+                    is_wechat_running=lambda: True,
+                )
+                self.assertFalse(blocked["success"])
+                self.assertEqual(blocked.get("code"), "wechat_running")
+
+                # Promote pending_peer so its Msg_ table now exists, then re-install:
+                # should install real triggers and delete the stale row from _weflow_anti_revoke_pending.
+                pending_tbl = f"Msg_{hashlib.md5(pending_peer.encode('utf-8')).hexdigest()}"
+                plain_before, crypto_before = _decrypt_db_with_wal(enc_msg0, passphrase)
+                promo_path = root / "promo.db"
+                promo_path.write_bytes(plain_before)
+                promo_conn = sqlite3.connect(str(promo_path))
+                promo_conn.execute(
+                    f"CREATE TABLE {pending_tbl}("
+                    "local_id INTEGER PRIMARY KEY AUTOINCREMENT, server_id INTEGER, local_type INTEGER, "
+                    "sort_seq INTEGER, real_sender_id INTEGER, create_time INTEGER, status INTEGER, "
+                    "upload_status INTEGER, download_status INTEGER, server_seq INTEGER, origin_source INTEGER, "
+                    "source TEXT, message_content TEXT, compress_content TEXT, packed_info_data BLOB, "
+                    "WCDB_CT_message_content INTEGER DEFAULT NULL, WCDB_CT_source INTEGER DEFAULT NULL)"
+                )
+                promo_conn.commit()
+                promo_conn.close()
+                from wechat_decrypt_tool.macos_anti_revoke import _encrypt_plaintext_sqlite
+
+                enc_msg0.write_bytes(_encrypt_plaintext_sqlite(promo_path.read_bytes(), crypto_before))
+                LOCAL_SQLCIPHER_READER.invalidate_root(db_storage)
+
+                promo_res = execute_macos_anti_revoke_action(
+                    "install",
+                    "wxid_self",
+                    [pending_peer],
+                    db_storage_dir=db_storage,
+                    native_wxid="wxid_self",
+                    hex_key=passphrase.hex(),
+                    is_wechat_running=lambda: False,
+                )
+                self.assertTrue(promo_res["success"])
+                promo_triggers = LOCAL_SQLCIPHER_READER.query(
+                    enc_msg0,
+                    db_storage,
+                    f"SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='{pending_tbl}'",
+                    key_bytes=passphrase,
+                )
+                self.assertTrue(
+                    any(r["name"] == f"anti_revoke_block_insert_{pending_tbl}" for r in promo_triggers)
+                )
+                pending_after_promo = LOCAL_SQLCIPHER_READER.query(
+                    enc_msg0,
+                    db_storage,
+                    "SELECT session_id FROM _weflow_anti_revoke_pending",
+                    key_bytes=passphrase,
+                )
+                self.assertEqual(pending_after_promo, [])
+
                 # Uninstall should drop triggers and remove pending row cleanly
                 unres = execute_macos_anti_revoke_action(
                     "uninstall",

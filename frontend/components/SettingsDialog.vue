@@ -647,21 +647,16 @@
             <div class="mb-2.5 text-[12px] font-bold text-[#999] tracking-widest">聊天与媒体</div>
             <div class="overflow-hidden rounded-[10px] border border-[#e7e7e7] bg-white divide-y divide-[#ececec]">
               <div class="px-3.5 py-3">
-                <div class="flex items-center justify-between gap-3">
+                <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0 flex-1">
-                    <div class="text-[13px] font-medium text-[#222]">自动获取原图</div>
-                    <div class="mt-0.5 text-[11px] text-[#909090]">本地缺原图时自动联网拉取原图，按套餐额度计费。关闭后仅显示本地已有图片。</div>
+                    <div class="text-[13px] font-medium text-[#222]">图片原图读取模式</div>
+                    <div class="mt-0.5 text-[11px] leading-relaxed text-[#909090]">
+                      已启用纯本地只读提取（零联网、零风控）：自动优先读取微信本地目录的高清原图。若图片当前仅显示缩略图，只需先在电脑微信中点开一次，再点击“刷新本地大图”或刷新聊天即可自动升级。
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    :aria-checked="cdnImageEnabled"
-                    class="settings-switch shrink-0"
-                    :class="switchTrackClass(cdnImageEnabled, cdnImageLoading)"
-                    @click="toggleCdnImage"
-                  >
-                    <span class="settings-switch-thumb" :class="cdnImageEnabled ? 'translate-x-[20px]' : 'translate-x-0'" />
-                  </button>
+                  <span class="shrink-0 rounded-full border border-[#d6efe0] bg-[#eefaf3] px-2.5 py-0.5 text-[11px] font-medium text-[#07b75b]">
+                    纯本地只读
+                  </span>
                 </div>
               </div>
             </div>
@@ -787,8 +782,6 @@ const desktopVersionText = computed(() => {
 
 const desktopDefaultToChatWhenData = ref(true)
 
-const cdnImageEnabled = ref(false)
-const cdnImageLoading = ref(false)
 const snsUseCache = ref(true)
 
 const desktopAutoLaunch = ref(false)
@@ -2131,30 +2124,6 @@ const toggleDesktopDefaultToChat = () => {
   writeLocalBoolSetting(DESKTOP_SETTING_DEFAULT_TO_CHAT_KEY, next)
 }
 
-const loadCdnImageStatus = async () => {
-  try {
-    const res = await api.getCdnImageStatus()
-    cdnImageEnabled.value = res?.enabled === true
-  } catch {
-    // 读取失败保持默认关闭
-  }
-}
-
-const toggleCdnImage = async () => {
-  if (cdnImageLoading.value) return
-  const next = !cdnImageEnabled.value
-  cdnImageLoading.value = true
-  cdnImageEnabled.value = next
-  try {
-    const res = await api.toggleCdnImage(next)
-    cdnImageEnabled.value = res?.enabled === true
-  } catch {
-    cdnImageEnabled.value = !next
-  } finally {
-    cdnImageLoading.value = false
-  }
-}
-
 const toggleSnsUseCache = () => {
   const next = !snsUseCache.value
   snsUseCache.value = next
@@ -2223,7 +2192,6 @@ onMounted(async () => {
 
   desktopDefaultToChatWhenData.value = readLocalBoolSetting(DESKTOP_SETTING_DEFAULT_TO_CHAT_KEY, true)
   snsUseCache.value = readLocalBoolSetting(SNS_SETTING_USE_CACHE_KEY, true)
-  void loadCdnImageStatus()
 
   if (props.open) await refreshSettingsDialogData()
 

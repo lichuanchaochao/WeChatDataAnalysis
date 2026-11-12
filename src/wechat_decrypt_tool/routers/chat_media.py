@@ -4,6 +4,7 @@ from functools import lru_cache
 import hashlib
 import html
 import ipaddress
+import json
 import mimetypes
 import os
 import sqlite3
@@ -443,7 +444,13 @@ def _resolve_video_path_from_realtime_hardlink(
     return path, token
 
 
-def _build_cached_media_response(request: Optional[Request], data: bytes, media_type: str) -> Response:
+def _build_cached_media_response(
+    request: Optional[Request],
+    data: bytes,
+    media_type: str,
+    *,
+    resolution: Optional[str] = None,
+) -> Response:
     payload = bytes(data or b"")
     etag = f'"{hashlib.sha1(payload).hexdigest()}"'
     cache_control = f"private, max-age={CHAT_MEDIA_BROWSER_CACHE_SECONDS}"
@@ -451,6 +458,9 @@ def _build_cached_media_response(request: Optional[Request], data: bytes, media_
         "Cache-Control": cache_control,
         "ETag": etag,
     }
+    if resolution in {"hd", "thumb"}:
+        headers["X-Image-Resolution"] = resolution
+        headers["Access-Control-Expose-Headers"] = "X-Image-Resolution"
 
     try:
         if_none_match = str(request.headers.get("if-none-match") or "").strip() if request else ""
@@ -2686,7 +2696,7 @@ async def get_chat_image(
             mediaType=cached_media_type,
             bytes=len(cached_data or b""),
         )
-        return _build_cached_media_response(request, cached_data, cached_media_type)
+        return _build_cached_media_response(request, cached_data, cached_media_type, resolution="hd")
 
     # 优先从本地微信会话目录只读查找更清晰的大图版本（100% 本地只读、零网络、零风控）
     if username or md5:
@@ -2721,7 +2731,12 @@ async def get_chat_image(
                         mediaType=f"image/{best_export.extension}",
                         bytes=len(best_export.data),
                     )
-                    return _build_cached_media_response(request, best_export.data, f"image/{best_export.extension}")
+                    return _build_cached_media_response(
+                        request,
+                        best_export.data,
+                        f"image/{best_export.extension}",
+                        resolution="hd",
+                    )
                 elif not prefer_live and not fetch_remote:
                     cur_score = image_payload_score(cached_data, cached_media_type) if cached_data else (-1, -1)
                     new_score = image_payload_score(best_export.data, f"image/{best_export.extension}")
@@ -2731,7 +2746,12 @@ async def get_chat_image(
                                 await asyncio.to_thread(cache_export_image, account_dir, str(md5).lower(), best_export)
                             except Exception:
                                 pass
-                        return _build_cached_media_response(request, best_export.data, f"image/{best_export.extension}")
+                        return _build_cached_media_response(
+                            request,
+                            best_export.data,
+                            f"image/{best_export.extension}",
+                            resolution="thumb" if best_export.thumbnail else "hd",
+                        )
         except Exception as e:
             logger.debug("本地大图自动升级探测异常: %s", e)
 
@@ -2743,7 +2763,12 @@ async def get_chat_image(
             mediaType=cached_media_type,
             bytes=len(cached_data or b""),
         )
-        return _build_cached_media_response(request, cached_data, cached_media_type)
+        return _build_cached_media_response(
+            request,
+            cached_data,
+            cached_media_type,
+            resolution="hd" if is_known_large else "thumb",
+        )
 
     # 回退：从微信数据目录实时定位并解密
     roots_started_at = time.perf_counter()
@@ -2998,16 +3023,25 @@ async def get_chat_image(
     if not p:
         if cached_path and not fetch_remote:
             trace("response:ready", result="decrypted-cache-fallback", mediaType=cached_media_type, bytes=len(cached_data or b""))
-            return _build_cached_media_response(request, cached_data, cached_media_type)
+            return _build_cached_media_response(
+                request,
+                cached_data,
+                cached_media_type,
+                resolution="hd" if is_known_large else "thumb",
+            )
 
         # 本地找不到原图 → 自动下载已开启或用户明确点击加载时，用消息 XML 里的
-        # cdnbigimgurl(fileid) + aeskey 从 CDN 拉原图（每账号每天限 10 次）。显式点击
-        # “尝试加载大图”时即使关闭了自动下载开关，也允许本次用户发起的请求回源。
+        # cdnbigimgurl(fileid) + aeskey 从 CDN 拉原图（已禁用外连，仅作回退占位）。
         cdn_result = await fetch_cdn_original()
         if cdn_result is not None:
             payload, cdn_media_type = cdn_result
             trace("response:ready", result="cdn-download", mediaType=cdn_media_type, bytes=len(payload))
-            return _build_cached_media_response(request, payload, cdn_media_type)
+            return _build_cached_media_response(request, payload, cdn_media_type, resolution="hd")
+
+        if cached_path and cached_data and cached_media_type:
+            res_tag = "hd" if is_known_large else "thumb"
+            trace("response:ready", result="fallback-cached-on-remote-miss", resolution=res_tag)
+            return _build_cached_media_response(request, cached_data, cached_media_type, resolution=res_tag)
 
         trace(
             "response:error",
@@ -3015,6 +3049,11 @@ async def get_chat_image(
             allowDeepScan=bool(allow_deep_scan),
             candidateCount=len(candidates),
         )
+        if fetch_remote:
+            raise HTTPException(
+                status_code=404,
+                detail="微信本地目录暂未找到原图，请先在电脑微信中点开该图片后重试",
+            )
         raise HTTPException(status_code=404, detail="Image not found.")
 
     candidates_started_at = time.perf_counter()
@@ -3138,20 +3177,33 @@ async def get_chat_image(
         if cdn_result is not None:
             payload, cdn_media_type = cdn_result
             trace("response:ready", result="cdn-download", mediaType=cdn_media_type, bytes=len(payload))
-            return _build_cached_media_response(request, payload, cdn_media_type)
+            return _build_cached_media_response(request, payload, cdn_media_type, resolution="hd")
         if chosen and data and media_type.startswith("image/"):
             pass
         elif cached_data and cached_media_type:
             trace("response:ready", result="fallback-cached-on-remote-miss")
-            return _build_cached_media_response(request, cached_data, cached_media_type)
+            return _build_cached_media_response(
+                request,
+                cached_data,
+                cached_media_type,
+                resolution="hd" if is_known_large else "thumb",
+            )
         else:
             trace("response:error", result="large-image-not-found")
-            raise HTTPException(status_code=404, detail="Large image not found locally or via CDN.")
+            raise HTTPException(
+                status_code=404,
+                detail="微信本地目录暂未找到原图，请先在电脑微信中点开该图片后重试",
+            )
 
     if not chosen:
         if cached_data and cached_media_type:
             trace("response:ready", result="fallback-cached-on-no-chosen")
-            return _build_cached_media_response(request, cached_data, cached_media_type)
+            return _build_cached_media_response(
+                request,
+                cached_data,
+                cached_media_type,
+                resolution="hd" if is_known_large else "thumb",
+            )
         trace("response:error", result="decode-failed", decodeAttempts=decode_attempts)
         raise HTTPException(status_code=422, detail="Image found but failed to decode/decrypt.")
 
@@ -3175,11 +3227,19 @@ async def get_chat_image(
     else:
         trace("decrypted-cache:write", skipped=True)
 
-    logger.info(
-        f"chat_image: md5={md5} file_id={file_id} chosen={chosen} media_type={media_type} bytes={len(data)}"
+    resolved_hd = bool(local_large_found) or (
+        bool(chosen)
+        and (
+            (is_known_large and chosen == cached_path)
+            or (chosen != cached_path and _is_probable_large_image_source(chosen))
+        )
     )
-    trace("response:ready", result="decoded", mediaType=media_type, bytes=len(data or b""))
-    return _build_cached_media_response(request, data, media_type)
+    resolution = "hd" if resolved_hd else "thumb"
+    logger.info(
+        f"chat_image: md5={md5} file_id={file_id} chosen={chosen} media_type={media_type} bytes={len(data)} resolution={resolution}"
+    )
+    trace("response:ready", result="decoded", mediaType=media_type, bytes=len(data or b""), resolution=resolution)
+    return _build_cached_media_response(request, data, media_type, resolution=resolution)
 
 
 @router.get("/api/chat/media/emoji", summary="获取表情消息资源")
