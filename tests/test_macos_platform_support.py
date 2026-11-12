@@ -264,6 +264,45 @@ class TestMacosPlatformSupport(unittest.TestCase):
 
         self.assertFalse(result["data"]["can_fallback_to_macos_lldb"])
 
+    def test_database_key_endpoint_offers_lldb_fallback_when_helper_host_pin_fails(self) -> None:
+        class ConnectedRequest:
+            async def is_disconnected(self) -> bool:
+                return False
+
+        failure = MacosDbKeyUnavailableError(
+            "host pin failed",
+            code="HELPER_INTEGRITY_FAILURE",
+            retryable=False,
+        )
+        with (
+            patch.object(keys_router, "is_macos", return_value=True),
+            patch.object(keys_router, "get_db_key_workflow", side_effect=failure),
+            patch.object(keys_router, "_macos_lldb_fallback_available", return_value=True),
+        ):
+            result = asyncio.run(keys_router.get_wechat_db_key(ConnectedRequest()))
+
+        self.assertEqual(result["status"], -1)
+        self.assertTrue(result["data"]["can_fallback_to_macos_lldb"])
+
+    def test_inspect_macos_db_key_bundle_switches_to_fallback_when_host_unpinned(self) -> None:
+        from wechat_decrypt_tool import macos_db_key_helper as helper
+
+        fake_bundle = SimpleNamespace(
+            source_runtime=True,
+            host_signing_identifier="com.lifearchive.wechatdataanalysis.backend",
+            host_signer_sha256="a" * 64,
+            build_id="wda-xkey-test",
+            build_expires_at_unix=2_000_000_000,
+        )
+        with (
+            patch.object(helper, "validate_macos_db_key_bundle", return_value=fake_bundle),
+            patch.object(helper, "_current_host_matches_helper_pin", return_value=False),
+        ):
+            status = helper.inspect_macos_db_key_bundle()
+
+        self.assertFalse(status.available)
+        self.assertEqual(status.error_code, "HOST_SIGNATURE_UNAVAILABLE")
+
     def test_macos_lldb_prepare_endpoint_returns_only_sanitized_stage(self) -> None:
         with (
             patch.object(keys_router, "is_macos", return_value=True),

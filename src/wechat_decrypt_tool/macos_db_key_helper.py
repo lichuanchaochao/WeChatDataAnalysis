@@ -504,7 +504,11 @@ def validate_macos_db_key_bundle(
         raise MacosDbKeyIntegrityError(
             "本机时间早于组件签发时间，请校准系统时间后重试。", code="CLOCK_ROLLBACK"
         )
-    # 彻底解除过期检查，永久有效
+    if current_time >= expires_at:
+        raise MacosDbKeyUnavailableError(
+            "内置私有 macOS 数据库密钥组件已过期，将自动切换使用本机开源密钥捕获方案。",
+            code="BUILD_EXPIRED",
+        )
 
     signing = _exact_keys(
         manifest.get("signing"),
@@ -665,6 +669,19 @@ def validate_macos_db_key_bundle(
     )
 
 
+def _current_host_matches_helper_pin(bundle: ValidatedMacosDbKeyBundle) -> bool:
+    if not bundle.source_runtime:
+        return True
+    try:
+        host_sig = _default_signature_verifier(Path(sys.executable).resolve())
+    except Exception:
+        return False
+    return (
+        host_sig.identifier == bundle.host_signing_identifier
+        and host_sig.leaf_sha256.lower() == bundle.host_signer_sha256.lower()
+    )
+
+
 def inspect_macos_db_key_bundle() -> MacosDbKeyBundleStatus:
     try:
         bundle = validate_macos_db_key_bundle()
@@ -675,6 +692,14 @@ def inspect_macos_db_key_bundle() -> MacosDbKeyBundleStatus:
             False,
             "macOS 数据库密钥本地组件校验失败，请更新或重新安装正式版本。",
             error_code="INTERNAL_VALIDATION_ERROR",
+        )
+    if not _current_host_matches_helper_pin(bundle):
+        return MacosDbKeyBundleStatus(
+            False,
+            "当前以本地源码/自建模式运行，将直接使用内置开源 macOS 本机密钥捕获方案。",
+            error_code="HOST_SIGNATURE_UNAVAILABLE",
+            build_id=bundle.build_id,
+            build_expires_at_unix=bundle.build_expires_at_unix,
         )
     return MacosDbKeyBundleStatus(
         True,
