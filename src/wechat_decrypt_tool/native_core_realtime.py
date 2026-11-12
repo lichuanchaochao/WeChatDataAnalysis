@@ -14,10 +14,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from . import native_core_raw_key_cache
+from .local_sqlite_realtime import LOCAL_SQLCIPHER_READER, LocalSQLCipherRealtimeError
 from .logging_config import get_logger
 from .native_core_broker import managed_native_core_operation, stop_native_core_broker
 from .native_core_client import (
     NativeCoreClient,
+    NativeCoreComponentMissingError,
     NativeCoreDatabase,
     NativeCoreDatabaseAccess,
     NativeCoreDatabaseKeyMode,
@@ -139,6 +141,9 @@ _read_database_pending_opens = 0
 _read_database_pending_keys: set[tuple[int, str]] = set()
 _limit_recycle_lock = threading.Lock()
 _last_limit_recycled_client: NativeCoreClient | None = None
+_local_fallback_lock = threading.Lock()
+_local_realtime_fallback_active = False
+_local_realtime_fallback_reason = ""
 
 
 def _read_database_cache_key(context: _AccountContext, database_path: Path) -> tuple[int, str]:
@@ -734,20 +739,115 @@ def _query_once(
         return query_generation()
 
 
+def _local_sqlcipher_enabled() -> bool:
+    raw = str(os.environ.get("WECHAT_TOOL_LOCAL_SQLCIPHER_REALTIME", "1") or "").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _is_local_realtime_fallback_active() -> bool:
+    with _local_fallback_lock:
+        return _local_realtime_fallback_active
+
+
+def _activate_local_realtime_fallback(reason: Any) -> None:
+    global _local_realtime_fallback_active, _local_realtime_fallback_reason
+    detail = str(reason or "").strip() or "native-core unavailable"
+    should_log = False
+    with _local_fallback_lock:
+        if not _local_realtime_fallback_active:
+            _local_realtime_fallback_active = True
+            _local_realtime_fallback_reason = detail[:240]
+            should_log = True
+    if should_log:
+        logger.warning(
+            "[realtime] 闭源 native-core 当前不可用或已过期，已自动切换为纯 Python SQLCipher+WAL 开源实时读库引擎: %s",
+            detail[:240],
+        )
+
+
+def _should_fallback_on_native_error(exc: BaseException) -> bool:
+    if isinstance(exc, (NativeCorePolicyError, NativeCoreUnavailableError, NativeCoreComponentMissingError)):
+        return True
+    if isinstance(exc, NativeCoreError):
+        status = int(getattr(exc, "status", 0) or 0)
+        return status in {
+            int(NativeCoreStatus.UNAVAILABLE),
+            int(NativeCoreStatus.LICENSE_REQUIRED),
+            int(NativeCoreStatus.LEASE_INVALID),
+            int(NativeCoreStatus.LEASE_EXPIRED),
+            int(NativeCoreStatus.FEATURE_DENIED),
+            int(NativeCoreStatus.BUILD_MISMATCH),
+            int(NativeCoreStatus.DEVICE_MISMATCH),
+            int(NativeCoreStatus.TAMPER_DETECTED),
+        }
+    return False
+
+
+def _query_local_sqlcipher(
+    context: _AccountContext, database_path: Path, sql: str
+) -> list[dict[str, Any]]:
+    _prime_database_raw_keys(context, [database_path])
+    cached_raw = _cached_database_raw_key(context, database_path)
+    try:
+        return LOCAL_SQLCIPHER_READER.query(
+            database_path,
+            context.db_storage_dir,
+            sql,
+            key_bytes=bytes(context.key),
+            cached_raw_key=bytes(cached_raw) if cached_raw is not None else None,
+            max_rows=_MAX_QUERY_ROWS,
+        )
+    except LocalSQLCipherRealtimeError as exc:
+        raise NativeCoreRealtimeError(str(exc)) from exc
+
+
 def _query(context: _AccountContext, database_path: Path, sql: str) -> list[dict[str, Any]]:
     with context.lock:
         if context.closed:
             raise NativeCoreRealtimeError("Native-core account handle is closed.")
+        local_enabled = _local_sqlcipher_enabled()
+        if local_enabled and _is_local_realtime_fallback_active():
+            return _query_local_sqlcipher(context, database_path, sql)
         try:
             return _query_once(context, database_path, sql)
         except NativeCorePolicyError as policy_error:
             if policy_error.status not in _REFRESHABLE_POLICY_STATUSES:
+                if local_enabled and _should_fallback_on_native_error(policy_error):
+                    _activate_local_realtime_fallback(policy_error)
+                    return _query_local_sqlcipher(context, database_path, sql)
                 raise
-            with managed_native_core_operation(database_root=context.db_storage_dir):
-                client = get_native_core_client()
-                _close_cached_read_databases(client=client)
-                refresh_native_core_lease(client, NativeCoreFeature.DATABASE_READ)
-            return _query_once(context, database_path, sql)
+            try:
+                with managed_native_core_operation(database_root=context.db_storage_dir):
+                    client = get_native_core_client()
+                    manifest = getattr(client, "build_manifest", None)
+                    build_exp = int(getattr(manifest, "build_expires_at_unix", 0) or 0)
+                    _close_cached_read_databases(client=client)
+                    if local_enabled and build_exp > 0 and int(time.time()) >= build_exp:
+                        _activate_local_realtime_fallback(
+                            f"native-core build expired at {build_exp}"
+                        )
+                        return _query_local_sqlcipher(context, database_path, sql)
+                    refresh_native_core_lease(client, NativeCoreFeature.DATABASE_READ)
+                return _query_once(context, database_path, sql)
+            except (
+                NativeCorePolicyError,
+                NativeCoreUnavailableError,
+                NativeCoreComponentMissingError,
+                OSError,
+            ) as exc:
+                if local_enabled and _should_fallback_on_native_error(exc):
+                    _activate_local_realtime_fallback(exc)
+                    return _query_local_sqlcipher(context, database_path, sql)
+                raise
+        except (
+            NativeCoreUnavailableError,
+            NativeCoreComponentMissingError,
+            NativeCoreError,
+        ) as exc:
+            if local_enabled and _should_fallback_on_native_error(exc):
+                _activate_local_realtime_fallback(exc)
+                return _query_local_sqlcipher(context, database_path, sql)
+            raise
 
 
 def _initial_raw_key_database_paths(context: _AccountContext) -> tuple[Path, ...]:
@@ -855,16 +955,24 @@ def close_account(handle: int) -> None:
         value = int(handle)
     except Exception:
         return
+    invalidate_root: Path | None = None
     with _registry_lock:
         context = _accounts.pop(value, None)
         stale = [key for key, cursor in _message_cursors.items() if cursor.account_handle == value]
         for key in stale:
             _message_cursors.pop(key, None)
+        if context is not None and not any(
+            other.db_storage_dir == context.db_storage_dir for other in _accounts.values()
+        ):
+            invalidate_root = context.db_storage_dir
     if context is not None:
         context.close()
+    if invalidate_root is not None:
+        LOCAL_SQLCIPHER_READER.invalidate_root(invalidate_root)
 
 
 def close_all() -> None:
+    global _local_realtime_fallback_active, _local_realtime_fallback_reason
     with _registry_lock:
         contexts = list(_accounts.values())
         _accounts.clear()
@@ -872,6 +980,10 @@ def close_all() -> None:
     for context in contexts:
         context.close()
     _close_cached_read_databases()
+    LOCAL_SQLCIPHER_READER.invalidate_root(None)
+    with _local_fallback_lock:
+        _local_realtime_fallback_active = False
+        _local_realtime_fallback_reason = ""
 
 
 def exec_query(

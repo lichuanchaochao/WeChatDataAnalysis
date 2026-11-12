@@ -269,6 +269,11 @@ def _resolve_worker_script() -> Path:
 
 def _execute_worker_action(action: str, account: str, session_ids: List[str]) -> Dict[str, Any]:
     """Spawns WeFlow.exe with worker.py to install or uninstall triggers."""
+    if sys.platform != "win32":
+        return {
+            "success": False,
+            "error": "防撤回触发器安装/卸载依赖 Windows 端 wcdb_api.dll 写库驱动，当前 macOS 端暂仅支持查看会话与触发器状态。",
+        }
     db_storage_dir, _native_wxid, hex_key = _resolve_account_info(account)
     weflow_exe = _ensure_weflow_host_executable()
     worker_script = _resolve_worker_script()

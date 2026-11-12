@@ -129,6 +129,8 @@ pro-shots/
 /.build-tests/
 /.build-logs/
 /.pytest_cache/
+/.native-core-cache-v1/
+/.realtime-sqlite-cache/
 /*.exe
 /*.zip
 /.claude/
