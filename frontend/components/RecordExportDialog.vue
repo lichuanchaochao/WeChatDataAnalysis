@@ -187,6 +187,8 @@
 </template>
 
 <script setup>
+import { computed, onMounted, ref, watch } from 'vue'
+
 const props = defineProps({
   open: { type: Boolean, default: false },
   dataset: { type: String, required: true },
@@ -330,6 +332,19 @@ watch(() => props.open, (open) => {
 
 watch(normalizedTypeOptions, () => {
   if (props.open) resetSelection()
+})
+
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('wechat_export_output_dir')
+    if (saved) outputDir.value = saved
+  }
+})
+
+watch(outputDir, (val) => {
+  if (typeof window !== 'undefined' && val) {
+    localStorage.setItem('wechat_export_output_dir', val)
+  }
 })
 </script>
 

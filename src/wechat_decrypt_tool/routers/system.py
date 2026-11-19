@@ -19,22 +19,48 @@ async def get_platform_capabilities():
 
 
 def _open_folder_dialog(title: str, initial_dir: str) -> str:
-    # 延迟导入并放在独立线程运行，避免阻塞 FastAPI 主线程或发生 GUI 线程冲突
-    import tkinter as tk
-    from tkinter import filedialog
+    import sys
+    import os
+    import subprocess
 
-    root = tk.Tk()
-    root.withdraw()  # 隐藏主窗口
-    root.attributes('-topmost', True)  # 确保弹窗在最前
+    if sys.platform == "darwin":
+        try:
+            default_part = ""
+            if initial_dir and os.path.isdir(initial_dir):
+                default_part = f' default location POSIX file "{initial_dir}"'
+            script = f'POSIX path of (choose folder with prompt "{title}"{default_part})'
+            res = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if res.returncode == 0:
+                p = res.stdout.strip()
+                if p and os.path.isdir(p):
+                    return p
+            return ""
+        except Exception:
+            return ""
 
-    folder_path = filedialog.askdirectory(
-        parent=root,
-        title=title,
-        initialdir=initial_dir
-    )
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
 
-    root.destroy()
-    return folder_path
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+
+        folder_path = filedialog.askdirectory(
+            parent=root,
+            title=title,
+            initialdir=initial_dir
+        )
+
+        root.destroy()
+        return folder_path or ""
+    except Exception:
+        return ""
 
 
 @router.get("/api/system/pick_directory", summary="唤起本地原生目录选择器")
