@@ -17,6 +17,7 @@
           </div>
 
           <div class="records-masthead__actions">
+            <!-- Search Box -->
             <label class="records-search">
               <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
               <input v-model="keyword" type="search" aria-label="搜索文件" placeholder="搜索文件名、来源群聊、发送人" autocomplete="off" />
@@ -25,6 +26,7 @@
               </button>
             </label>
 
+            <!-- Categorized Export to Local -->
             <button
               type="button"
               class="records-action-button text-xs px-3 py-1.5 rounded-lg bg-[#07c160] hover:bg-[#06ae56] text-white flex items-center gap-1.5 font-medium transition shadow-sm"
@@ -35,6 +37,7 @@
               <span>分类归档到本地</span>
             </button>
 
+            <!-- Refresh Button -->
             <button
               type="button"
               class="records-icon-button"
@@ -52,23 +55,115 @@
         <section class="records-body files-container" aria-label="文件列表">
           <!-- Filters Toolbar -->
           <div class="files-toolbar flex flex-col gap-3 pb-3 border-b border-gray-100">
-            <!-- Source Selector -->
-            <div class="flex items-center gap-2">
-              <span class="text-xs text-gray-400 font-medium mr-1">来源出处:</span>
-              <button
-                v-for="s in sourceOptions"
-                :key="s.value"
-                type="button"
-                class="px-2.5 py-1 text-xs rounded-md transition font-medium"
-                :class="sourceFilter === s.value ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'"
-                @click="sourceFilter = s.value"
-              >
-                {{ s.label }}
-                <span class="ml-1 opacity-75">({{ s.count }})</span>
-              </button>
+            <!-- Row 1: Source Selector & Specific Source Dropdown & Hidden Manager -->
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+              <!-- Left: Source Big Categories -->
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-gray-400 font-medium mr-1">来源出处:</span>
+                <button
+                  v-for="s in sourceOptions"
+                  :key="s.value"
+                  type="button"
+                  class="px-2.5 py-1 text-xs rounded-md transition font-medium"
+                  :class="sourceFilter === s.value ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'"
+                  @click="sourceFilter = s.value"
+                >
+                  {{ s.label }}
+                  <span class="ml-1 opacity-75">({{ s.count }})</span>
+                </button>
+              </div>
+
+              <!-- Right: Specific Source Selector & Hidden Sources Manager Badge -->
+              <div class="flex items-center gap-2">
+                <!-- Specific Source Selector Dropdown -->
+                <div class="relative" ref="sourceDropdownRef">
+                  <div class="flex items-center gap-1">
+                    <button
+                      type="button"
+                      class="px-3 py-1 text-xs rounded-md border transition font-medium flex items-center gap-1.5 shadow-xs"
+                      :class="specificSourceId ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'"
+                      @click="sourceDropdownOpen = !sourceDropdownOpen"
+                    >
+                      <i class="fa-solid" :class="specificSourceId ? 'fa-user-check text-blue-600' : 'fa-users text-gray-500'"></i>
+                      <span class="max-w-[170px] truncate">{{ currentSpecificSourceTitle }}</span>
+                      <i class="fa-solid fa-chevron-down text-[10px] opacity-60"></i>
+                    </button>
+
+                    <button
+                      v-if="specificSourceId"
+                      type="button"
+                      class="w-5 h-5 rounded flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition text-xs"
+                      title="清除按群筛选"
+                      @click="clearSpecificSource"
+                    >
+                      <i class="fa-solid fa-xmark"></i>
+                    </button>
+                  </div>
+
+                  <!-- Dropdown Menu -->
+                  <div
+                    v-if="sourceDropdownOpen"
+                    class="absolute right-0 top-full mt-1.5 z-40 bg-white border border-gray-200 shadow-xl rounded-xl w-72 p-2 flex flex-col gap-1.5 animate-in fade-in zoom-in-95 duration-100"
+                  >
+                    <!-- Search input inside dropdown -->
+                    <div class="relative px-1 pt-1">
+                      <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-xs text-gray-400"></i>
+                      <input
+                        v-model="sourceSearchQuery"
+                        type="text"
+                        placeholder="过滤群聊或联系人..."
+                        class="w-full pl-7 pr-2.5 py-1 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-hidden focus:border-[#07c160]"
+                      />
+                    </div>
+
+                    <div class="max-h-60 overflow-y-auto flex flex-col gap-0.5 pt-1">
+                      <button
+                        type="button"
+                        class="text-left px-2.5 py-1.5 text-xs rounded-lg hover:bg-gray-100 flex items-center justify-between transition"
+                        :class="{ 'font-semibold text-[#07c160] bg-[#07c160]/10': !specificSourceId }"
+                        @click="selectSpecificSource('')"
+                      >
+                        <span>全部群聊与好友</span>
+                        <span class="text-[11px] opacity-60">{{ summary.total_count || total }}</span>
+                      </button>
+
+                      <button
+                        v-for="src in filteredAvailableSources"
+                        :key="src.source_id"
+                        type="button"
+                        class="text-left px-2.5 py-1.5 text-xs rounded-lg hover:bg-gray-100 flex items-center justify-between transition"
+                        :class="{ 'font-semibold text-blue-600 bg-blue-50': specificSourceId === src.source_id }"
+                        @click="selectSpecificSource(src.source_id, src.source_title)"
+                      >
+                        <span class="truncate max-w-[190px] flex items-center gap-1.5">
+                          <i class="fa-solid text-[11px]" :class="src.is_group ? 'fa-users text-blue-500' : 'fa-user text-gray-500'"></i>
+                          <span class="truncate" :title="src.source_title">{{ src.source_title }}</span>
+                        </span>
+                        <span class="text-[11px] font-mono opacity-60 ml-2">({{ src.count }})</span>
+                      </button>
+
+                      <div v-if="!filteredAvailableSources.length" class="text-center py-4 text-xs text-gray-400">
+                        未找到匹配的来源
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Hidden Sources Manager Button -->
+                <button
+                  v-if="hiddenSourceIds.length > 0"
+                  type="button"
+                  class="px-2.5 py-1 text-xs rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition font-medium flex items-center gap-1.5 shadow-xs"
+                  title="管理已隐藏的群聊和来源"
+                  @click="hiddenManagerModalOpen = true"
+                >
+                  <i class="fa-solid fa-eye-slash text-xs"></i>
+                  <span>已隐藏 {{ hiddenSourceIds.length }} 个来源 (点击恢复)</span>
+                </button>
+              </div>
             </div>
 
-            <!-- Category Selector -->
+            <!-- Row 2: Category Selector -->
             <div class="flex items-center gap-1.5 flex-wrap">
               <span class="text-xs text-gray-400 font-medium mr-1">文件类别:</span>
               <button
@@ -174,12 +269,36 @@
               </div>
 
               <!-- Right: Actions -->
-              <div class="flex items-center gap-2 flex-shrink-0">
+              <div class="flex items-center gap-1.5 flex-shrink-0">
+                <!-- Focus on this source -->
+                <button
+                  v-if="file.source_id && specificSourceId !== file.source_id"
+                  type="button"
+                  class="px-2 py-1 text-xs rounded-md bg-blue-50/70 hover:bg-blue-100 text-blue-700 border border-blue-200/60 flex items-center gap-1 transition"
+                  :title="file.is_group ? '仅看该群文件' : '仅看此人文件'"
+                  @click="selectSpecificSource(file.source_id, file.source_title)"
+                >
+                  <i class="fa-solid fa-bullseye text-[11px]"></i>
+                  <span>{{ file.is_group ? '仅看该群' : '仅看此人' }}</span>
+                </button>
+
+                <!-- Hide this source -->
+                <button
+                  v-if="file.source_id"
+                  type="button"
+                  class="px-2 py-1 text-xs rounded-md bg-gray-50 hover:bg-rose-50 text-gray-500 hover:text-rose-600 border border-gray-200/60 hover:border-rose-200 flex items-center gap-1 transition"
+                  :title="file.is_group ? '隐藏该群所有文件' : '隐藏此人所有文件'"
+                  @click="hideSource(file)"
+                >
+                  <i class="fa-solid fa-eye-slash text-[11px]"></i>
+                  <span>{{ file.is_group ? '隐藏该群' : '隐藏此人' }}</span>
+                </button>
+
                 <!-- Open in Finder / Explorer -->
                 <button
                   v-if="file.is_local_exists"
                   type="button"
-                  class="px-2.5 py-1 text-xs rounded-md bg-gray-100 hover:bg-gray-200 text-gray-700 flex items-center gap-1 transition"
+                  class="px-2.5 py-1 text-xs rounded-md bg-gray-100 hover:bg-gray-200 text-gray-700 flex items-center gap-1 transition ml-1"
                   title="在系统访达或资源管理器中定位文件"
                   @click="openFolder(file)"
                 >
@@ -205,20 +324,120 @@
               </div>
             </article>
 
-            <!-- Load More Button -->
-            <div v-if="hasMore" class="flex justify-center pt-4 pb-6">
+            <!-- Load More & Load All Area -->
+            <div v-if="hasMore" class="flex items-center justify-center gap-3 pt-4 pb-6">
               <button
                 type="button"
                 class="px-4 py-2 text-xs rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition flex items-center gap-2"
-                :disabled="loading"
+                :disabled="loading || loadingAll"
                 @click="loadItems({ append: true })"
               >
-                <i v-if="loading" class="fa-solid fa-arrow-rotate-right fa-spin"></i>
-                <span>加载更多文件</span>
+                <i v-if="loading && !loadingAll" class="fa-solid fa-arrow-rotate-right fa-spin"></i>
+                <span>加载更多 (50条)</span>
               </button>
+
+              <button
+                type="button"
+                class="px-4 py-2 text-xs rounded-lg font-medium transition flex items-center gap-2 bg-[#07c160]/10 hover:bg-[#07c160]/20 text-[#07c160] border border-[#07c160]/30 shadow-xs"
+                :disabled="loading || loadingAll"
+                @click="loadAllFiles"
+              >
+                <i v-if="loadingAll" class="fa-solid fa-arrow-rotate-right fa-spin text-sm"></i>
+                <i v-else class="fa-solid fa-bolt text-xs"></i>
+                <span>{{ loadingAll ? `正在载入中... ${items.length} / ${total}` : `加载全部 (剩余 ${total - items.length} 个)` }}</span>
+              </button>
+            </div>
+
+            <!-- All Loaded State Indicator -->
+            <div v-else-if="items.length > 0 && total > 0" class="flex justify-center items-center gap-2 py-5 text-xs text-gray-400 font-medium">
+              <i class="fa-solid fa-circle-check text-emerald-500"></i>
+              <span>✓ 已加载全部文件 (共 {{ items.length }} 条)</span>
             </div>
           </div>
         </section>
+
+        <!-- Hidden Sources Management Modal -->
+        <div v-if="hiddenManagerModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+          <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl flex flex-col gap-4 border border-gray-100 animate-in fade-in zoom-in-95 duration-150">
+            <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                  <i class="fa-solid fa-eye-slash"></i>
+                </div>
+                <h3 class="font-bold text-gray-900 text-base">已隐藏的来源列表</h3>
+              </div>
+              <button type="button" class="text-gray-400 hover:text-gray-600 p-1" @click="hiddenManagerModalOpen = false">
+                <i class="fa-solid fa-xmark text-lg"></i>
+              </button>
+            </div>
+
+            <div class="text-xs text-gray-500">
+              以下来源的文件已在列表中被屏蔽，您可以随时点击右侧按钮恢复显示：
+            </div>
+
+            <div class="max-h-64 overflow-y-auto flex flex-col gap-1.5 py-1">
+              <div
+                v-for="sourceId in hiddenSourceIds"
+                :key="sourceId"
+                class="p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100/80 border border-gray-100 flex items-center justify-between gap-3 transition"
+              >
+                <div class="flex items-center gap-2 min-w-0">
+                  <i class="fa-solid text-xs text-gray-400" :class="sourceId.endsWith('@chatroom') ? 'fa-users' : 'fa-user'"></i>
+                  <span class="text-xs font-medium text-gray-800 truncate" :title="hiddenSourcesMap[sourceId] || sourceId">
+                    {{ hiddenSourcesMap[sourceId] || sourceId }}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  class="px-2.5 py-1 text-xs rounded-lg bg-white hover:bg-emerald-50 text-emerald-600 border border-gray-200 hover:border-emerald-200 transition font-medium flex-shrink-0"
+                  @click="unhideSource(sourceId)"
+                >
+                  恢复显示
+                </button>
+              </div>
+
+              <div v-if="!hiddenSourceIds.length" class="text-center py-6 text-xs text-gray-400">
+                当前没有隐藏任何来源
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
+              <button
+                v-if="hiddenSourceIds.length > 0"
+                type="button"
+                class="text-xs text-rose-600 hover:text-rose-700 font-medium"
+                @click="unhideAllSources"
+              >
+                全部恢复显示
+              </button>
+              <div v-else></div>
+
+              <button
+                type="button"
+                class="px-4 py-2 text-xs rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium transition"
+                @click="hiddenManagerModalOpen = false"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Toast Notification for Hiding Source -->
+        <div
+          v-if="toastMessage"
+          class="fixed bottom-6 right-6 z-50 bg-gray-900/90 text-white text-xs px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 backdrop-blur-xs animate-in fade-in slide-in-from-bottom-2 duration-150"
+        >
+          <span>{{ toastMessage }}</span>
+          <button
+            v-if="toastUndoId"
+            type="button"
+            class="text-emerald-400 hover:text-emerald-300 font-semibold underline underline-offset-2 transition"
+            @click="undoHideSource"
+          >
+            撤销
+          </button>
+        </div>
 
         <!-- Export Categorized Dialog -->
         <div v-if="exportModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
@@ -313,7 +532,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useChatAccountsStore } from '~/stores/chatAccounts'
 
 const api = useApi()
@@ -324,12 +543,31 @@ const selectedAccount = computed(() => chatAccounts.selectedAccount || '')
 const items = ref([])
 const total = ref(0)
 const loading = ref(false)
+const loadingAll = ref(false)
 const error = ref('')
 const hasMore = ref(false)
 
 const keyword = ref('')
 const sourceFilter = ref('all')
 const categoryFilter = ref('all')
+
+// Specific Source Filter
+const specificSourceId = ref('')
+const specificSourceTitle = ref('')
+const availableSources = ref([])
+const sourceDropdownOpen = ref(false)
+const sourceSearchQuery = ref('')
+const sourceDropdownRef = ref(null)
+
+// Hidden Sources Management
+const hiddenSourceIds = ref([])
+const hiddenSourcesMap = ref({})
+const hiddenManagerModalOpen = ref(false)
+
+// Toast
+const toastMessage = ref('')
+const toastUndoId = ref('')
+let toastTimer = null
 
 const summary = ref({
   total_count: 0,
@@ -362,7 +600,106 @@ const categoryOptions = computed(() => [
   { label: '其它', value: 'other', icon: 'fa-folder', count: summary.value.other_count || 0 },
 ])
 
+const currentSpecificSourceTitle = computed(() => {
+  if (!specificSourceId.value) return '全部群聊与好友'
+  return specificSourceTitle.value || hiddenSourcesMap.value[specificSourceId.value] || '指定来源'
+})
+
+const filteredAvailableSources = computed(() => {
+  const query = sourceSearchQuery.value.trim().toLowerCase()
+  const list = availableSources.value || []
+  if (!query) return list
+  return list.filter(s =>
+    (s.source_title || '').toLowerCase().includes(query) ||
+    (s.source_id || '').toLowerCase().includes(query)
+  )
+})
+
 const PAGE_SIZE = 50
+
+const loadHiddenSourcesFromStorage = () => {
+  if (typeof window === 'undefined') return
+  try {
+    const rawIds = localStorage.getItem('wechat_files_hidden_sources')
+    if (rawIds) {
+      hiddenSourceIds.value = JSON.parse(rawIds) || []
+    }
+    const rawMap = localStorage.getItem('wechat_files_hidden_sources_map')
+    if (rawMap) {
+      hiddenSourcesMap.value = JSON.parse(rawMap) || {}
+    }
+  } catch {}
+}
+
+const saveHiddenSourcesToStorage = () => {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem('wechat_files_hidden_sources', JSON.stringify(hiddenSourceIds.value))
+    localStorage.setItem('wechat_files_hidden_sources_map', JSON.stringify(hiddenSourcesMap.value))
+  } catch {}
+}
+
+const hideSource = (file) => {
+  const sid = file?.source_id
+  if (!sid) return
+  if (!hiddenSourceIds.value.includes(sid)) {
+    hiddenSourceIds.value.push(sid)
+  }
+  const title = file.source_title || sid
+  hiddenSourcesMap.value[sid] = title
+  saveHiddenSourcesToStorage()
+
+  if (specificSourceId.value === sid) {
+    specificSourceId.value = ''
+    specificSourceTitle.value = ''
+  }
+
+  showToast(`已隐藏「${title}」的文件`, sid)
+  void loadItems()
+}
+
+const unhideSource = (sid) => {
+  hiddenSourceIds.value = hiddenSourceIds.value.filter(id => id !== sid)
+  saveHiddenSourcesToStorage()
+  void loadItems()
+}
+
+const unhideAllSources = () => {
+  hiddenSourceIds.value = []
+  hiddenSourcesMap.value = {}
+  saveHiddenSourcesToStorage()
+  hiddenManagerModalOpen.value = false
+  void loadItems()
+}
+
+const undoHideSource = () => {
+  if (toastUndoId.value) {
+    unhideSource(toastUndoId.value)
+    toastMessage.value = ''
+    toastUndoId.value = ''
+  }
+}
+
+const showToast = (msg, undoId = '') => {
+  toastMessage.value = msg
+  toastUndoId.value = undoId
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    toastMessage.value = ''
+    toastUndoId.value = ''
+  }, 4000)
+}
+
+const selectSpecificSource = (sid, title = '') => {
+  specificSourceId.value = sid || ''
+  specificSourceTitle.value = title || ''
+  sourceDropdownOpen.value = false
+  void loadItems()
+}
+
+const clearSpecificSource = () => {
+  selectSpecificSource('')
+}
 
 const loadItems = async ({ append = false } = {}) => {
   await chatAccounts.ensureLoaded()
@@ -374,6 +711,7 @@ const loadItems = async ({ append = false } = {}) => {
   }
 
   loading.value = true
+  loadingAll.value = false
   error.value = ''
   try {
     const res = await api.listUnifiedFiles({
@@ -381,6 +719,8 @@ const loadItems = async ({ append = false } = {}) => {
       source: sourceFilter.value,
       category: categoryFilter.value,
       keyword: keyword.value,
+      source_id: specificSourceId.value || undefined,
+      exclude_sources: hiddenSourceIds.value.length ? hiddenSourceIds.value.join(',') : undefined,
       offset: append ? items.value.length : 0,
       limit: PAGE_SIZE,
     })
@@ -392,10 +732,45 @@ const loadItems = async ({ append = false } = {}) => {
     if (res?.summary && typeof res.summary === 'object') {
       summary.value = res.summary
     }
+    if (Array.isArray(res?.available_sources) && res.available_sources.length) {
+      availableSources.value = res.available_sources
+    }
   } catch (err) {
     error.value = err?.message || '读取文件列表失败'
   } finally {
     loading.value = false
+  }
+}
+
+const loadAllFiles = async () => {
+  await chatAccounts.ensureLoaded()
+  if (!selectedAccount.value || loadingAll.value || loading.value) return
+
+  loadingAll.value = true
+  error.value = ''
+  try {
+    const res = await api.listUnifiedFiles({
+      account: selectedAccount.value,
+      source: sourceFilter.value,
+      category: categoryFilter.value,
+      keyword: keyword.value,
+      source_id: specificSourceId.value || undefined,
+      exclude_sources: hiddenSourceIds.value.length ? hiddenSourceIds.value.join(',') : undefined,
+      offset: 0,
+      limit: 100000,
+    })
+
+    const nextItems = Array.isArray(res?.items) ? res.items : []
+    items.value = nextItems
+    total.value = Number(res?.total || 0)
+    hasMore.value = false
+    if (res?.summary && typeof res.summary === 'object') {
+      summary.value = res.summary
+    }
+  } catch (err) {
+    error.value = err?.message || '读取全部文件失败'
+  } finally {
+    loadingAll.value = false
   }
 }
 
@@ -486,6 +861,9 @@ const startExport = async () => {
       account: selectedAccount.value,
       source: sourceFilter.value,
       category: categoryFilter.value,
+      keyword: keyword.value,
+      source_id: specificSourceId.value || undefined,
+      exclude_sources: hiddenSourceIds.value.length ? hiddenSourceIds.value.join(',') : undefined,
       target_mode: exportMode.value,
     })
     exportStatusType.value = 'success'
@@ -498,8 +876,22 @@ const startExport = async () => {
   }
 }
 
+const handleDocumentClick = (e) => {
+  if (sourceDropdownRef.value && !sourceDropdownRef.value.contains(e.target)) {
+    sourceDropdownOpen.value = false
+  }
+}
+
 onMounted(async () => {
+  document.addEventListener('click', handleDocumentClick)
+  loadHiddenSourcesFromStorage()
   await loadItems()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleDocumentClick)
+  if (searchTimer) clearTimeout(searchTimer)
+  if (toastTimer) clearTimeout(toastTimer)
 })
 </script>
 

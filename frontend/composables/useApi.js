@@ -520,6 +520,8 @@ export const useApi = () => {
     if (params?.source) query.set('source', params.source)
     if (params?.category) query.set('category', params.category)
     if (params?.keyword) query.set('keyword', params.keyword)
+    if (params?.source_id) query.set('source_id', params.source_id)
+    if (params?.exclude_sources) query.set('exclude_sources', params.exclude_sources)
     if (params?.offset != null) query.set('offset', String(params.offset))
     if (params?.limit != null) query.set('limit', String(params.limit))
     return await request(`/files/list?${query.toString()}`)

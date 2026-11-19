@@ -225,12 +225,17 @@ async def list_unified_files(
     source: SourceType = Query("all", description="来源筛选：all/chat/favorite"),
     category: CategoryType = Query("all", description="类型筛选：all/doc/video/voice/image/archive/other"),
     keyword: str = Query("", description="搜索关键词（文件名/来源/发送人）"),
+    source_id: Optional[str] = Query(None, description="按具体群聊或好友wxid筛选"),
+    exclude_sources: Optional[str] = Query(None, description="排除/隐藏的来源wxid列表，英文逗号分隔"),
     offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=100000),
 ):
     source = str(_unwrap_param(source, "all") or "all").lower()
     category = str(_unwrap_param(category, "all") or "all").lower()
     keyword = str(_unwrap_param(keyword, "") or "").strip()
+    source_id = str(_unwrap_param(source_id, "") or "").strip()
+    exclude_raw = str(_unwrap_param(exclude_sources, "") or "").strip()
+    exclude_set = {s.strip() for s in exclude_raw.split(",") if s.strip()}
     try:
         offset = int(_unwrap_param(offset, 0))
     except Exception:
@@ -248,6 +253,7 @@ async def list_unified_files(
     contact_resolver = ContactNameResolver(account_dir)
 
     all_items: list[dict[str, Any]] = []
+    source_stats: dict[str, dict[str, Any]] = {}
 
     # 1. Fetch Chat Files if source is 'all' or 'chat'
     if source in ("all", "chat"):
@@ -302,6 +308,23 @@ async def list_unified_files(
                             and kw not in sender_name.lower()
                         ):
                             continue
+
+                    # Record source stats for dropdown selection
+                    if username:
+                        if username not in source_stats:
+                            source_stats[username] = {
+                                "source_id": username,
+                                "source_title": source_title,
+                                "is_group": username.endswith("@chatroom"),
+                                "count": 0,
+                            }
+                        source_stats[username]["count"] += 1
+
+                    # Apply source_id filter or exclude_sources filter
+                    if source_id and username != source_id:
+                        continue
+                    if username in exclude_set:
+                        continue
 
                     # Check disk existence
                     disk_path = _find_chat_disk_file(file_map, wxid_dir, clean_name, ctime, ext)
@@ -400,6 +423,22 @@ async def list_unified_files(
                             ):
                                 continue
 
+                        fav_source_id = realchat or fromusr or f"fav_{lid}"
+                        if fav_source_id:
+                            if fav_source_id not in source_stats:
+                                source_stats[fav_source_id] = {
+                                    "source_id": fav_source_id,
+                                    "source_title": source_title or f"微信收藏 #{lid}",
+                                    "is_group": fav_source_id.endswith("@chatroom"),
+                                    "count": 0,
+                                }
+                            source_stats[fav_source_id]["count"] += 1
+
+                        if source_id and fav_source_id != source_id:
+                            continue
+                        if fav_source_id in exclude_set:
+                            continue
+
                         disk_path = _find_favorite_disk_file(fav_map, file_map, wxid_dir, dmd5, clean_name)
                         if disk_path and disk_path.exists() and dsize <= 0:
                             dsize = disk_path.stat().st_size
@@ -407,9 +446,9 @@ async def list_unified_files(
                         item = {
                             "id": f"fav_{lid}_{d_idx}",
                             "source_type": "favorite",
-                            "source_id": str(lid),
+                            "source_id": fav_source_id,
                             "source_title": f"收藏 · {title}" if title else f"微信收藏 #{lid}",
-                            "is_group": fromusr.endswith("@chatroom"),
+                            "is_group": fav_source_id.endswith("@chatroom"),
                             "sender_username": source_owner,
                             "sender_name": source_title,
                             "filename": clean_name,
@@ -446,6 +485,7 @@ async def list_unified_files(
         "local_ready_count": sum(1 for it in all_items if it["is_local_exists"]),
     }
 
+    available_sources = sorted(source_stats.values(), key=lambda x: x["count"], reverse=True)
     paginated = all_items[offset : offset + limit]
     return {
         "status": "success",
@@ -453,6 +493,7 @@ async def list_unified_files(
         "offset": offset,
         "limit": limit,
         "summary": summary,
+        "available_sources": available_sources[:500],
         "items": paginated,
     }
 
@@ -526,6 +567,9 @@ class ExportCategorizedFilesRequest(BaseModel):
     account: str
     source: SourceType = "all"
     category: CategoryType = "all"
+    keyword: Optional[str] = ""
+    source_id: Optional[str] = None
+    exclude_sources: Optional[str] = None
     selected_ids: Optional[list[str]] = None
     target_mode: Literal["folder", "zip"] = "folder"
     custom_dir: Optional[str] = None
@@ -538,7 +582,11 @@ async def export_categorized_files(req: ExportCategorizedFilesRequest):
         account=req.account,
         source=req.source,
         category=req.category,
-        limit=20000,
+        keyword=req.keyword or "",
+        source_id=req.source_id,
+        exclude_sources=req.exclude_sources,
+        offset=0,
+        limit=100000,
     )
     items = res.get("items", [])
     if req.selected_ids:

@@ -127,10 +127,35 @@
             </article>
           </div>
 
-          <button v-if="hasMore" type="button" class="records-more" :disabled="loading" @click="loadItems({ append: true })">
-            <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
-            <span>{{ loading ? '正在载入' : `继续载入 ${items.length} / ${total}` }}</span>
-          </button>
+          <!-- Load More & Load All Area -->
+          <div v-if="hasMore" class="favorites-pagination flex items-center justify-center gap-3 pt-4 pb-6">
+            <button
+              type="button"
+              class="records-more records-more--inline"
+              :disabled="loading || loadingAll"
+              @click="loadItems({ append: true })"
+            >
+              <i class="fa-solid fa-chevron-down" :class="{ 'fa-spin': loading && !loadingAll }" aria-hidden="true"></i>
+              <span>{{ loading && !loadingAll ? '正在载入...' : `继续载入 (${items.length} / ${total})` }}</span>
+            </button>
+
+            <button
+              type="button"
+              class="records-load-all-button px-4 py-2 text-xs rounded-lg font-medium transition flex items-center gap-1.5 bg-[#07c160]/10 hover:bg-[#07c160]/20 text-[#07c160] border border-[#07c160]/30 shadow-xs"
+              :disabled="loading || loadingAll"
+              @click="loadAllFavorites"
+            >
+              <i v-if="loadingAll" class="fa-solid fa-arrow-rotate-right fa-spin text-xs"></i>
+              <i v-else class="fa-solid fa-bolt text-xs"></i>
+              <span>{{ loadingAll ? `正在载入中... ${items.length} / ${total}` : `加载全部 (剩余 ${total - items.length} 条)` }}</span>
+            </button>
+          </div>
+
+          <!-- All Loaded State Indicator -->
+          <div v-else-if="items.length > 0 && total > 0" class="flex justify-center items-center gap-2 py-5 text-xs text-gray-400 font-medium">
+            <i class="fa-solid fa-circle-check text-emerald-500"></i>
+            <span>✓ 已加载全部收藏 (共 {{ items.length }} 条)</span>
+          </div>
         </section>
       </main>
     </div>
@@ -212,6 +237,7 @@ const total = ref(0)
 const databaseTotal = ref(0)
 const hasMore = ref(false)
 const loading = ref(false)
+const loadingAll = ref(false)
 const error = ref('')
 const tags = ref([])
 const typeCounts = ref({})
@@ -547,7 +573,41 @@ const resetItems = () => {
   items.value = []
   total.value = 0
   hasMore.value = false
+  loadingAll.value = false
   error.value = ''
+}
+
+const loadAllFavorites = async () => {
+  await chatAccounts.ensureLoaded()
+  if (!selectedAccount.value || loadingAll.value || loading.value) return
+
+  loadingAll.value = true
+  const rid = ++requestId
+  error.value = ''
+  try {
+    const response = await api.listFavorites({
+      account: selectedAccount.value,
+      q: keyword.value || '',
+      kind: kindFilter.value,
+      tagId: Number(tagFilter.value || 0),
+      limit: 50000,
+      offset: 0,
+    })
+    if (rid !== requestId) return
+    const next = Array.isArray(response?.items) ? response.items : []
+    items.value = next
+    total.value = Number(response?.total || 0)
+    databaseTotal.value = Number(response?.databaseTotal || 0)
+    hasMore.value = false
+    tags.value = Array.isArray(response?.tags) ? response.tags : []
+    typeCounts.value = response?.typeCounts && typeof response.typeCounts === 'object' ? response.typeCounts : {}
+  } catch (loadError) {
+    if (rid === requestId) {
+      error.value = loadError?.message || '加载全部收藏失败'
+    }
+  } finally {
+    if (rid === requestId) loadingAll.value = false
+  }
 }
 
 const loadItems = async (options = {}) => {
@@ -712,6 +772,7 @@ onBeforeUnmount(() => {
 .favorite-preview img,
 .favorite-preview video { display: block; max-width: min(1100px, 94vw); max-height: 90vh; object-fit: contain; }
 .favorite-preview__close { position: absolute; top: 18px; right: 18px; display: grid; width: 38px; height: 38px; place-items: center; border: 0; border-radius: 50%; color: #fff; background: rgba(255, 255, 255, 0.14); cursor: pointer; }
+.records-more--inline { margin: 0; }
 
 @media (max-width: 760px) {
   .records-masthead__actions { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) 36px 36px; }

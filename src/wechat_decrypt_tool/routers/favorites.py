@@ -22,7 +22,7 @@ from .general import _coerce_blob_bytes, _open_db_source, _resolve_general_conta
 
 router = APIRouter()
 
-_MAX_LIMIT = 200
+_MAX_LIMIT = 100000
 _MAX_CONTENT_CHARS = 4 * 1024 * 1024
 _UNSAFE_XML_RE = re.compile(r"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
 _INVALID_XML_CONTROL_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
@@ -792,18 +792,45 @@ def _matches_query(item: dict[str, Any], query: str) -> bool:
     needle = _text(query, max_len=300).lower()
     if not needle:
         return True
+
+    haystack_parts: list[Any] = [
+        item.get("typeLabel"),
+        item.get("title"),
+        item.get("summary"),
+        item.get("textBlocks"),
+        item.get("attachments"),
+        item.get("sourceName"),
+        item.get("sourceUsername"),
+        item.get("sourceChatUsername"),
+        item.get("senderUsername"),
+        item.get("conversationUsername"),
+        item.get("sourceToUsername"),
+        item.get("tags"),
+    ]
+
+    for contact_key in ("sourceContact", "sourceChatContact", "conversationContact", "senderContact"):
+        c = item.get(contact_key)
+        if isinstance(c, dict):
+            haystack_parts.extend([
+                c.get("displayName"),
+                c.get("name"),
+                c.get("nickname"),
+                c.get("remark"),
+                c.get("username"),
+            ])
+
+    orig = item.get("originalMessage")
+    if isinstance(orig, dict):
+        haystack_parts.extend([
+            orig.get("senderDisplayName"),
+            orig.get("senderUsername"),
+            orig.get("conversationTitle"),
+            orig.get("title"),
+            orig.get("content"),
+        ])
+
     haystack = json.dumps(
-        {
-            "type": item.get("typeLabel"),
-            "title": item.get("title"),
-            "summary": item.get("summary"),
-            "text": item.get("textBlocks"),
-            "attachments": item.get("attachments"),
-            "source": item.get("sourceName"),
-            "sourceContact": item.get("sourceContact"),
-            "sourceChatContact": item.get("sourceChatContact"),
-            "tags": item.get("tags"),
-        },
+        haystack_parts,
         ensure_ascii=False,
         default=str,
     ).lower()
@@ -821,6 +848,20 @@ def list_favorites(
     limit: int = Query(80, ge=1, le=_MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ):
+    try:
+        tag_id = int(tag_id.default if hasattr(tag_id, "default") else tag_id)
+    except Exception:
+        tag_id = 0
+    try:
+        limit = int(limit.default if hasattr(limit, "default") else limit)
+    except Exception:
+        limit = 80
+    try:
+        offset = int(offset.default if hasattr(offset, "default") else offset)
+    except Exception:
+        offset = 0
+    if hasattr(source, "default"):
+        source = str(source.default)
     ctx = resolve_chat_account_context(account)
     with _open_db_source(
         ctx,
