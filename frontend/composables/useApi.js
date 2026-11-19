@@ -514,6 +514,31 @@ export const useApi = () => {
     return await request(url, { method: 'POST' })
   }
 
+  const listUnifiedFiles = async (params = {}) => {
+    const query = new URLSearchParams()
+    if (params?.account) query.set('account', params.account)
+    if (params?.source) query.set('source', params.source)
+    if (params?.category) query.set('category', params.category)
+    if (params?.keyword) query.set('keyword', params.keyword)
+    if (params?.offset != null) query.set('offset', String(params.offset))
+    if (params?.limit != null) query.set('limit', String(params.limit))
+    return await request(`/files/list?${query.toString()}`)
+  }
+
+  const openUnifiedFileFolder = async (data = {}) => {
+    return await request('/files/open_folder', {
+      method: 'POST',
+      body: data
+    })
+  }
+
+  const exportCategorizedFiles = async (data = {}) => {
+    return await request('/files/export_categorized', {
+      method: 'POST',
+      body: data
+    })
+  }
+
   const downloadChatEmoji = async (data = {}) => {
     return await request('/chat/media/emoji/download', {
       method: 'POST',
@@ -1344,5 +1369,8 @@ export const useApi = () => {
     listFavorites,
     exportRecords,
     getBizProxyImageUrl,
+    listUnifiedFiles,
+    openUnifiedFileFolder,
+    exportCategorizedFiles,
   }
 }

@@ -93,6 +93,21 @@
         </div>
       </div>
 
+      <!-- Files & Media -->
+      <div
+        class="sidebar-rail-action w-full h-[var(--sidebar-rail-step)] flex items-center justify-center cursor-pointer group"
+        title="文件管理"
+        @click="goFiles"
+      >
+        <div class="sidebar-rail-plate w-[var(--sidebar-rail-btn)] h-[var(--sidebar-rail-btn)] rounded-md flex items-center justify-center transition-colors bg-transparent">
+          <div class="sidebar-rail-icon w-[var(--sidebar-rail-icon)] h-[var(--sidebar-rail-icon)]" :class="{ 'sidebar-rail-icon-active': isFilesRoute }">
+            <svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </div>
+        </div>
+      </div>
+
       <!-- Contacts -->
       <div
         class="sidebar-rail-action w-full h-[var(--sidebar-rail-step)] flex items-center justify-center cursor-pointer group"
@@ -766,6 +781,7 @@ const selectAccountFromDialog = async (account) => {
 const isChatRoute = computed(() => route.path?.startsWith('/chat'))
 const isSnsRoute = computed(() => route.path?.startsWith('/sns'))
 const isFavoritesRoute = computed(() => route.path?.startsWith('/favorites'))
+const isFilesRoute = computed(() => route.path?.startsWith('/files'))
 const isContactsRoute = computed(() => route.path?.startsWith('/contacts'))
 const isBizRoute = computed(() => route.path?.startsWith('/biz')) // 新增
 const isMiniProgramsRoute = computed(() => route.path?.startsWith('/mini-programs'))
@@ -777,6 +793,7 @@ const isAntiRecallRoute = computed(() => route.path?.startsWith('/antirecall'))
 const goChat = async () => { await navigateTo('/chat') }
 const goSns = async () => { await navigateTo('/sns') }
 const goFavorites = async () => { await navigateTo('/favorites') }
+const goFiles = async () => { await navigateTo('/files') }
 const goContacts = async () => { await navigateTo('/contacts') }
 const goBiz = async () => { await navigateTo('/biz') }
 const goMiniPrograms = async () => { await navigateTo('/mini-programs') }

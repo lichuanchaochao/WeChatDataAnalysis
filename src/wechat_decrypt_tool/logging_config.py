@@ -137,6 +137,30 @@ def _can_use_logging_stream(stream) -> bool:
     return True
 
 
+class ConsoleTerminalFilter(logging.Filter):
+    """过滤控制台高频遥测、AI 索引诊断与轮询日志，防止终端渲染拥堵和卡顿。"""
+
+    _NOISY_LOGGERS = {
+        "wechat_decrypt_tool.ai.diagnostics",
+        "wechat_decrypt_tool.sns_realtime_autosync",
+        "wechat_decrypt_tool.routers.sns",
+        "watchfiles.main",
+        "watchfiles",
+    }
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+        logger_name = str(record.name or "").lower()
+        for noisy in self._NOISY_LOGGERS:
+            if logger_name == noisy or logger_name.startswith(noisy + "."):
+                return False
+        msg = str(record.msg or "")
+        if "[ai.dependency]" in msg or "[sns.incremental-sync]" in msg or "[ai.index." in msg:
+            return False
+        return True
+
+
 def install_sensitive_query_log_filter() -> None:
     access_logger = logging.getLogger("uvicorn.access")
     if any(getattr(item, "_wda_sensitive_query_filter", False) for item in access_logger.filters):
@@ -253,6 +277,7 @@ class WeChatLogger:
             console_handler.setFormatter(console_formatter)
             console_handler.setLevel(level)
             console_handler.addFilter(SensitiveHttpClientLogFilter())
+            console_handler.addFilter(ConsoleTerminalFilter())
 
         # httpx/httpcore INFO and DEBUG messages include complete request URLs.
         # SNS code emits its own redacted diagnostics, so dependency request

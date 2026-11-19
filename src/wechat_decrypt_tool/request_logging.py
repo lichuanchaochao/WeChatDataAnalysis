@@ -156,6 +156,8 @@ class SensitiveHttpClientLogFilter(logging.Filter):
                 fields.update(diagnostics.exception_fields(record.exc_info[1]))
             record.msg = '[ai.dependency] 依赖诊断 ' + json.dumps(fields, ensure_ascii=False, separators=(',', ':'))
             record.args, record.exc_info, record.exc_text, record.stack_info = (), None, None, None
+            record.levelno = logging.DEBUG
+            record.levelname = 'DEBUG'
         return not (
             logger_name.split('.')[0] in {'anthropic', 'openai', 'langchain', 'langchain_core', 'langchain_openai', 'langchain_anthropic', 'huggingface_hub'}
             or

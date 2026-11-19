@@ -107,6 +107,7 @@ const accountDataRoutePrefixes = [
   '/chat',
   '/sns',
   '/favorites',
+  '/files',
   '/contacts',
   '/biz',
   '/mini-programs',

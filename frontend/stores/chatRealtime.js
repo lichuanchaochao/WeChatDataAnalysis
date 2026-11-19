@@ -303,6 +303,9 @@ export const useChatRealtimeStore = defineStore('chatRealtime', () => {
         if (!streamIsCurrent(generation, account) || eventSource !== source) return
         streamReconnectAttempt = 0
       }, REALTIME_STREAM_STABLE_MS)
+      // 连接/重连成功后立即通知会话刷新补全断连期间到达的消息
+      messageEvent.value = { type: 'conversation_updated' }
+      changeSeq.value += 1
     }
 
     source.onmessage = (ev) => {
@@ -453,9 +456,33 @@ export const useChatRealtimeStore = defineStore('chatRealtime', () => {
         stopStream()
         return
       }
-      if (enabled.value) startStream()
+      if (enabled.value) {
+        startStream()
+        changeSeq.value += 1
+      }
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
+
+    const onWindowWakeup = () => {
+      if (document.visibilityState === 'visible' && enabled.value) {
+        if (!eventSource || eventSource.readyState === 2) {
+          startStream()
+        }
+        changeSeq.value += 1
+      }
+    }
+    window.addEventListener('focus', onWindowWakeup)
+    window.addEventListener('online', onWindowWakeup)
+
+    // 定时心跳看门狗：防止休眠恢复后静默断连
+    setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && enabled.value) {
+        if (!eventSource || eventSource.readyState === 2) {
+          startStream()
+          changeSeq.value += 1
+        }
+      }
+    }, 20_000)
 
     watch(
       () => chatAccounts.selectedAccount,

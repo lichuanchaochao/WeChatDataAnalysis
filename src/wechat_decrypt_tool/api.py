@@ -41,6 +41,7 @@ from .routers.wechat_detection import router as _wechat_detection_router
 from .routers.wrapped import router as _wrapped_router
 from .routers.general import router as _general_router
 from .routers.favorites import router as _favorites_router
+from .routers.files import router as _files_router
 from .routers.record_export import router as _record_export_router
 from .request_logging import log_server_errors_middleware
 from .perf_trace import ChatRequestPerfMiddleware
@@ -155,6 +156,7 @@ app.include_router(_wrapped_router)
 app.include_router(_biz_router)
 app.include_router(_general_router)
 app.include_router(_favorites_router)
+app.include_router(_files_router)
 app.include_router(_record_export_router)
 app.include_router(_system_router)
 app.include_router(_cdn_router)

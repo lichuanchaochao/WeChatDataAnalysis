@@ -1031,6 +1031,10 @@ const maybeRefreshMediaOnResume = () => {
 
 const onWindowFocus = () => {
   maybeRefreshMediaOnResume()
+  if (realtimeEnabled.value) {
+    queueRealtimeRefresh()
+    queueRealtimeSessionsRefresh()
+  }
 }
 
 const onVisibilityChange = () => {
@@ -1039,9 +1043,9 @@ const onVisibilityChange = () => {
     return
   }
   if (document.visibilityState !== 'visible') return
-  const resumedFromHidden = lastPageHiddenAt > 0
+  lastPageHiddenAt = 0
   maybeRefreshMediaOnResume()
-  if (resumedFromHidden && realtimeEnabled.value) {
+  if (realtimeEnabled.value) {
     queueRealtimeRefresh()
     queueRealtimeSessionsRefresh()
   }
