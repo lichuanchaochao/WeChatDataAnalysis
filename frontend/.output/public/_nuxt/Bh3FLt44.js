@@ -1,0 +1,1 @@
+import{o}from"./C-IsxeON.js";const E="1109365501",s="https://qm.qq.com/q/2IB0gvYpYA",n="请进 QQ 3 群咨询群主",A=`进 3 群 ${E}`,t=`进 QQ 3 群 ${E} 私聊咨询群主获取`,T=`当前版本仅展示该功能入口，暂时无法执行。如需使用高级版，请${t}。`,a=()=>o(s);export{A as D,T as F,n as a,a as o};
